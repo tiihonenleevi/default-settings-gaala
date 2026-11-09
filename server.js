@@ -22,7 +22,7 @@ if (!ADMIN_CODE || ADMIN_CODE.length < 8) {
 }
 
 const FIXED_CATEGORY = { name: 'Vuoden sykähdyttävin hetki', description: 'Hetki, joka jäi kaikkien mieleen.' };
-const PHASES = { 1: 'Kategoriat', 2: 'Ehdokkaat', 3: 'Finaali', 4: 'Gaala' };
+const PHASES = { 1: 'Kategoriat', 2: 'Ehdokkaat', 3: 'Finaali', 4: 'Suljettu' };
 
 // ---------- Tietokanta (JSON-tiedosto) ----------
 let db = loadDb();
@@ -44,7 +44,6 @@ function emptyDb() {
     nominees: [],
     nomVotes: [],
     finalVotes: {},
-    revealed: [],
   };
 }
 
@@ -172,7 +171,7 @@ function stateFor(user) {
   const visibleCats = s.phase === 1 ? db.categories : advancedCats();
   base.categories = visibleCats.map((c) => ({
     id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced,
-    mine: c.by === uid, myVote: myCatVotes.has(c.id), revealed: db.revealed.includes(c.id),
+    mine: c.by === uid, myVote: myCatVotes.has(c.id),
   }));
 
   const visibleNoms = s.phase === 2
@@ -188,8 +187,6 @@ function stateFor(user) {
     catProposals: db.categories.filter((c) => c.by === uid).length,
   };
 
-  // Gaalavaiheessa paljastetut voittajat näkyvät kaikille
-  if (s.phase === 4) base.winners = winnersFor(db.revealed);
 
   if (user.admin) base.admin = adminView();
   return base;
@@ -231,7 +228,6 @@ function adminView() {
     nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, name: n.name, reason: n.reason, finalist: !!n.finalist, votes: nomCounts[n.id] || 0, finalVotes: fin[n.id] || 0 })),
     voters: { p1: new Set(db.catVotes.map((v) => v.userId)).size, p2: new Set(db.nomVotes.map((v) => v.userId)).size, p3: Object.keys(db.finalVotes).length },
     winners: winnersFor(advancedCats().map((c) => c.id)),
-    revealed: db.revealed,
   };
 }
 
@@ -245,7 +241,9 @@ route('POST', '/api/login', ({ req, body, res }) => {
   // Tailscale serve välittää pyynnöt localhostista; oikea osoite on X-Forwarded-For-otsakkeessa
   const remote = req.socket.remoteAddress || '';
   const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  const ip = /^(127\.|::1$|::ffff:127\.)/.test(remote) && fwd ? fwd : remote;
+  // Luotetaan otsakkeeseen, kun pyyntö tulee koneen sisältä (localhost tai Dockerin sisäverkko)
+  const local = /^(::ffff:)?(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)|^::1$|^f[cd]/.test(remote);
+  const ip = local && fwd ? fwd : remote;
   checkRate(ip);
   const code = normCode(body.code);
   let user;
@@ -472,15 +470,6 @@ route('DELETE', '/api/admin/nominees/:id', ({ user, params }) => {
   return stateFor(user);
 }, { admin: true });
 
-route('POST', '/api/admin/reveal', ({ user, body }) => {
-  requirePhase(4);
-  const cat = advancedCats().find((c) => c.id === body.categoryId) || fail(404, 'Kategoriaa ei löydy.');
-  if (body.hide) db.revealed = db.revealed.filter((id) => id !== cat.id);
-  else if (!db.revealed.includes(cat.id)) db.revealed.push(cat.id);
-  writeDb();
-  return stateFor(user);
-}, { admin: true });
-
 function requireVoter(user) {
   if (user.root) fail(403, 'Ylläpitotunnuksella ei voi ehdottaa eikä äänestää. Kirjaudu omalla henkilökohtaisella koodillasi.');
 }
@@ -537,4 +526,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => console.log(`Default Settings Gaala käynnissä: http://${HOST}:${PORT}`));
+server.listen(PORT, HOST, () => {
+  console.log(`Default Settings Gaala käynnissä: http://${HOST}:${PORT}`);
+  // Auttaa vianetsinnässä paljastamatta koodia: näyttää pituuden ja ensimmäisen merkin
+  console.log(`ADMIN_CODE ladattu: ${ADMIN_CODE.length} merkkiä, alkaa "${ADMIN_CODE[0]}"${ADMIN_CODE === 'vaihda-tama-pitkaan-koodiin' ? ' – HUOM: tämä on esimerkkiarvo, vaihda se .env-tiedostoon!' : ''}`);
+});

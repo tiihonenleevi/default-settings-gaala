@@ -9,7 +9,7 @@ Kaveriporukan palkintogaalan äänestyssivu. Ei riippuvuuksia: tarvitaan vain No
 | 1. Kategoriat | Ehdottavat kategorioita (oletuksena max 3/hlö) ja äänestävät niitä. Ääniä on yhtä monta kuin gaalaan valitaan kategorioita äänestämällä: jos gaalassa on 8 palkintoa, ääniä on 7, koska "Vuoden sykähdyttävin hetki" on aina mukana. Yhdelle kategorialle voi antaa vain yhden äänen. | Painaa "Valitse N eniten ääniä saanutta" (tai rastii käsin) ja siirtää vaiheeseen 2. |
 | 2. Ehdokkaat | Ehdottavat ehdokkaita jatkoon päässeisiin kategorioihin. Ehdotukseen kuuluu aina "Mistä?", joten saman henkilön voi ehdottaa samaan kategoriaan eri aiheista. Jokainen ehdotus näkyy kaikille korttina, jossa on äänestysnappi. Ääniä on 2 per kategoria, ja oma ehdotus vie automaattisesti yhden äänen. Äänen voi siirtää myöhemmin. | Rastii finalistit jokaiseen kategoriaan ja siirtää vaiheeseen 3. |
 | 3. Finaali | Antavat yhden äänen per kategoria. Valintaa voi vaihtaa, kunnes äänestys suljetaan. | Siirtää vaiheeseen 4 (suljettu). |
-| 4. Gaala | Näkevät vain voittajat, jotka admin on paljastanut. | Avaa gaalanäkymän (koko näyttö) ja paljastaa voittajat yksi kerrallaan. |
+| 4. Suljettu | Näkevät viestin, että äänestys on päättynyt ja voittajat julkistetaan gaalassa. | Näkee hallinnassa tulokset (voittajat ja finaalin äänimäärät) ja voi kopioida ne tekstinä gaalan diaesitystä varten. |
 
 - Äänet ja ehdottajat ovat anonyymejä. Kukaan ei näe, kuka ehdotti mitä tai kuka äänesti ketä.
 - Äänimäärät näkee vain admin. Finaalin äänet ovat oletuksena piilossa myös adminilta, jotta voittajat ovat yllätys myös teille. Ne saa näkyviin valinnalla "Näytä finaalin äänet".

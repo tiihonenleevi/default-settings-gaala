@@ -3,7 +3,6 @@
 
 let state = null;
 let showFinalCounts = false;
-let show = null; // gaalanäkymän tila: { categoryId, revealed }
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -51,7 +50,6 @@ function render() {
 
   for (const [id, v] of Object.entries(kept)) { const el = document.getElementById(id); if (el && v) el.value = v; }
   if (active) { const el = document.getElementById(active); if (el) { el.focus(); if (sel && el.setSelectionRange) try { el.setSelectionRange(...sel); } catch {} } }
-  renderShow();
 }
 
 // ---------- Kirjautuminen ----------
@@ -103,7 +101,7 @@ function mainView() {
 }
 
 function stepper() {
-  const names = ['Kategoriat', 'Ehdokkaat', 'Finaali', 'Gaala'];
+  const names = ['Kategoriat', 'Ehdokkaat', 'Finaali', 'Suljettu'];
   return `<ol class="stepper">${names.map((n, i) => {
     const p = i + 1; const cls = p < state.phase ? 'done' : p === state.phase ? 'now' : '';
     return `<li class="${cls}" ${p === state.phase ? 'aria-current="step"' : ''}>${p < 4 ? 'Vaihe ' + p : 'Lopuksi'}<b>${n}</b></li>`;
@@ -146,9 +144,9 @@ function phaseHero() {
     <div class="meta-row"><span class="meter">${pips(done, cats.length)} Äänestetty ${done} / ${cats.length} kategoriaa</span>${deadline()}</div>`;
   }
   return `<div class="hero-head">
-    <p class="eyebrow">Finaali-ilta</p>
+    <p class="eyebrow">Äänestys päättyi</p>
     <h1 class="display">Äänestys on suljettu</h1>
-    <p class="lead">Kiitos äänistä. Voittajat paljastetaan gaalassa${Object.keys(s.winners || {}).length ? ' – tässä tähän mennessä julkistetut' : ''}.</p>
+    <p class="lead">Kiitos äänistä! Voittajat julkistetaan gaalassa.</p>
   </div>`;
 }
 
@@ -251,23 +249,14 @@ function phase3() {
   }).join('');
 }
 
-function phase4() {
-  const s = state; const w = s.winners || {};
-  const revealed = s.categories.filter((c) => w[c.id]);
-  if (!revealed.length) return '';
-  return revealed.map((c) => {
-    const names = (w[c.id] || []).map((id) => s.nominees.find((n) => n.id === id)).filter(Boolean);
-    return `<section class="section"><header class="cat-head"><p class="eyebrow">Voittaja</p><h2 class="h2">${esc(c.name)}</h2></header>
-      <div class="list">${names.map((n) => `<div class="item is-voted" style="box-shadow:var(--glow-gold)"><div><div class="title">${esc(n.name)} <span class="tag tag--red">Voittaja</span></div>${n.reason ? `<p>${esc(n.reason)}</p>` : ''}</div></div>`).join('') || '<div class="empty">Ei ääniä.</div>'}</div></section>`;
-  }).join('');
-}
+function phase4() { return ''; }
 
 // ---------- Admin ----------
 function adminView() {
   const s = state; const a = s.admin; const L = s.limits;
   const maxCat = Math.max(1, ...a.categories.map((c) => c.votes));
   const advanced = a.categories.filter((c) => c.advanced);
-  const phaseNames = { 1: 'Kategoriat', 2: 'Ehdokkaat', 3: 'Finaali', 4: 'Gaala (suljettu)' };
+  const phaseNames = { 1: 'Kategoriat', 2: 'Ehdokkaat', 3: 'Finaali', 4: 'Suljettu' };
   return `
   <section class="admin" aria-labelledby="admin-h">
     <header class="cat-head"><p class="eyebrow">Vain järjestäjille</p><h2 class="h2" id="admin-h">Hallinta</h2></header>
@@ -277,7 +266,6 @@ function adminView() {
         <p class="eyebrow">Vaihe</p>
         <p style="margin:0">Nyt: <b>${s.phase}. ${phaseNames[s.phase]}</b></p>
         <div class="phase-btns">${[1, 2, 3, 4].filter((p) => p !== s.phase).map((p) => `<button class="btn btn--sm ${p === s.phase + 1 ? 'btn--primary' : 'btn--secondary'}" data-act="phase" data-phase="${p}">${p > s.phase ? 'Siirry' : 'Palaa'}: ${phaseNames[p]}</button>`).join('')}</div>
-        ${s.phase === 4 ? '<button class="btn btn--red" data-act="open-show">Avaa gaalanäkymä</button>' : ''}
       </div>
       <div class="panel">
         <p class="eyebrow">Osallistujat</p>
@@ -343,15 +331,7 @@ function adminView() {
       }).join('')}
     </div>` : ''}
 
-    ${s.phase === 4 ? `
-    <div style="display:grid;gap:12px">
-      <p class="eyebrow">Julkistus · paljastetut voittajat näkyvät kaikille</p>
-      <div class="list">${advanced.map((c) => {
-        const on = a.revealed.includes(c.id);
-        return `<div class="item"><div><div class="title">${esc(c.name)} ${on ? '<span class="tag tag--red">Julkistettu</span>' : ''}</div></div>
-          <button class="btn btn--sm btn--secondary" data-act="reveal" data-id="${c.id}" data-hide="${on}">${on ? 'Piilota' : 'Paljasta'}</button></div>`;
-      }).join('')}</div>
-    </div>` : ''}
+    ${s.phase === 4 ? resultsView() : ''}
   </section>`;
 }
 
@@ -389,43 +369,39 @@ function participantsView() {
   </div>`;
 }
 
-// ---------- Gaalanäkymä ----------
-function renderShow() {
-  let el = $('#show');
-  if (!show || !state?.me?.admin || state.phase !== 4) { if (el) el.remove(); return; }
-  if (!el) { el = document.createElement('div'); el.id = 'show'; el.className = 'show'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Gaalanäkymä'); document.body.appendChild(el); }
+function results() {
   const a = state.admin;
-  const cats = a.categories.filter((c) => c.advanced);
-  const cat = cats.find((c) => c.id === show.categoryId) || cats[0];
-  if (!cat) { el.innerHTML = '<p>Ei kategorioita.</p>'; return; }
-  show.categoryId = cat.id;
-  const idx = cats.indexOf(cat);
-  const finals = a.nominees.filter((n) => n.categoryId === cat.id && n.finalist);
-  const isRevealed = a.revealed.includes(cat.id);
-  const winners = (a.winners[cat.id] || []).map((id) => a.nominees.find((n) => n.id === id)).filter(Boolean);
-  el.innerHTML = `
-    <div class="rays" aria-hidden="true"></div>
-    <div class="show-bar">
-      <span class="brand" style="color:#fff"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Default Settings Gaala</span>
-      <span style="display:flex;gap:8px;align-items:center">
-        <select id="show-cat" aria-label="Kategoria">${cats.map((c, i) => `<option value="${c.id}" ${c.id === cat.id ? 'selected' : ''}>${String(i + 1).padStart(2, '0')} · ${esc(c.name)}</option>`).join('')}</select>
-        <button class="btn btn--ghost" data-act="close-show" style="color:#b5b5b8">Sulje</button>
-      </span>
+  return a.categories.filter((c) => c.advanced).map((c) => ({
+    cat: c,
+    noms: a.nominees.filter((n) => n.categoryId === c.id && n.finalist).sort((x, y) => y.finalVotes - x.finalVotes),
+    winners: a.winners[c.id] || [],
+  }));
+}
+
+function resultsView() {
+  return `
+  <div style="display:grid;gap:12px">
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
+      <p class="eyebrow">Tulokset · gaalan esitystä varten</p>
+      <button class="btn btn--secondary btn--sm" data-act="copy-results">Kopioi tulokset tekstinä</button>
     </div>
-    <div class="show-stage">
-      <p class="eyebrow">${isRevealed ? 'Ja voittaja on' : 'Ehdokkaat'}</p>
-      <h2 class="h1" style="color:#fff">${esc(cat.name)}</h2>
-      ${isRevealed
-        ? `<div class="show-winner">${winners.map((w) => esc(w.name)).join(' & ') || '—'}</div>${winners.length === 1 && winners[0].reason ? `<p style="color:#b5b5b8;font-size:20px;margin:0">${esc(winners[0].reason)}</p>` : ''}`
-        : `<div class="show-noms">${finals.map((n) => `<span>${esc(n.name)}</span>`).join('')}</div>`}
-    </div>
-    <div class="show-bar">
-      <button class="btn btn--ghost" style="color:#b5b5b8" data-act="show-prev" ${idx === 0 ? 'disabled' : ''}>← Edellinen</button>
-      ${isRevealed
-        ? (idx < cats.length - 1 ? '<button class="btn btn--primary" data-act="show-next">Seuraava kategoria →</button>' : '<span class="eyebrow">Kiitos illasta</span>')
-        : `<button class="btn btn--primary" data-act="show-reveal" data-id="${cat.id}">Paljasta voittaja</button>`}
-      <span style="width:120px"></span>
-    </div>`;
+    ${results().map(({ cat, noms, winners }) => `
+    <div class="table-wrap"><table>
+      <thead><tr><th colspan="3">${esc(cat.name)}</th></tr></thead>
+      <tbody>${noms.map((n) => `
+        <tr>
+          <td><b style="font-weight:500">${esc(n.name)}</b> ${winners.includes(n.id) ? '<span class="tag tag--red">Voittaja</span>' : ''}${n.reason ? `<div class="small muted">${esc(n.reason)}</div>` : ''}</td>
+          <td class="num">${n.finalVotes} ${n.finalVotes === 1 ? 'ääni' : 'ääntä'}</td>
+        </tr>`).join('') || '<tr><td class="muted">Ei finalisteja.</td></tr>'}</tbody>
+    </table></div>`).join('')}
+  </div>`;
+}
+
+function resultsText() {
+  return results().map(({ cat, noms, winners }) => {
+    const lines = noms.map((n) => `${winners.includes(n.id) ? '★ ' : '  '}${n.name}${n.reason ? ' – ' + n.reason : ''} (${n.finalVotes})`);
+    return `${cat.name}\n${lines.join('\n')}`;
+  }).join('\n\n');
 }
 
 // ---------- Tapahtumat ----------
@@ -454,14 +430,10 @@ document.addEventListener('click', async (e) => {
     }
     case 'del-cat': if (confirm('Poistetaanko kategoria ja sen ehdokkaat ja äänet?')) await api('DELETE', `/api/admin/categories/${id}`, {}).catch(() => {}); break;
     case 'del-nom': if (confirm('Poistetaanko ehdokas ja sen äänet?')) await api('DELETE', `/api/admin/nominees/${id}`, {}).catch(() => {}); break;
-    case 'reveal': await api('POST', '/api/admin/reveal', { categoryId: id, hide: t.dataset.hide === 'true' }).catch(() => {}); break;
-    case 'open-show': show = { categoryId: null }; renderShow(); document.documentElement.requestFullscreen?.().catch(() => {}); break;
-    case 'close-show': show = null; renderShow(); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); break;
-    case 'show-reveal': await api('POST', '/api/admin/reveal', { categoryId: id }).catch(() => {}); break;
-    case 'show-next': case 'show-prev': {
-      const cats = state.admin.categories.filter((c) => c.advanced);
-      const i = cats.findIndex((c) => c.id === show.categoryId) + (t.dataset.act === 'show-next' ? 1 : -1);
-      if (cats[i]) { show.categoryId = cats[i].id; renderShow(); }
+    case 'copy-results': {
+      const text = resultsText();
+      try { await navigator.clipboard.writeText(text); toast('Tulokset kopioitu leikepöydälle.'); }
+      catch { prompt('Kopioi tulokset:', text); }
       break;
     }
   }
@@ -469,7 +441,6 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('change', async (e) => {
   const t = e.target;
-  if (t.id === 'show-cat') { show.categoryId = t.value; renderShow(); return; }
   switch (t.dataset.act) {
     case 'final': await api('POST', '/api/final', { nomineeId: t.value }).then(() => toast('Ääni tallennettu.')).catch(() => {}); break;
     case 'user-admin': await api('POST', `/api/admin/users/${t.dataset.id}`, { admin: t.checked }).catch(() => {}); break;
@@ -513,7 +484,6 @@ document.addEventListener('submit', async (e) => {
   } catch { /* virhe näytetty toastina */ }
 });
 
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && show) { show = null; renderShow(); } });
 
 // Päivitä tila taustalla (ei kun käyttäjä kirjoittaa)
 setInterval(() => {
