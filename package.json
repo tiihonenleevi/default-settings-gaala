@@ -1,0 +1,9 @@
+{
+  "name": "default-settings-gaala",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kaveriporukan palkintogaalan äänestys: kategoriat, ehdokkaat ja finaali.",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
