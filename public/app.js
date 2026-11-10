@@ -575,7 +575,7 @@ function feedbackView() {
     <form class="panel feedback-form" id="feedback-form">
       <p class="eyebrow">Anonyymi palaute</p>
       <h2 class="h2">Mitä mieltä olit?</h2>
-      <p class="small muted" style="margin:0">Palaute näkyy muille ilman nimeä. Järjestäjät näkevät kirjoittajan.</p>
+      <p class="small muted" style="margin:0">Palaute näkyy muille nimettömänä.</p>
       <div class="field"><label for="fb-text" class="sr-only">Palaute</label><textarea class="input" id="fb-text" data-keep rows="4" maxlength="1000" placeholder="Kerro gaalasta, äänestyksestä tai mistä vain…"></textarea></div>
       <div><button class="btn btn--primary btn--sm" type="submit">Lähetä palaute</button></div>
     </form>
