@@ -222,7 +222,8 @@ function testBar() {
   return `
   <div class="test-bar"><div class="wrap">
     <div class="test-info"><span class="tag tag--red">Testitila</span><span class="small">Muutoksia ei tallenneta · oikea vaihe ${state.realPhase}</span></div>
-    <div class="test-phases">${names.map((n, i) => `<button class="btn btn--sm ${i + 1 === state.phase ? 'btn--primary' : 'btn--secondary'}" data-act="test-phase" data-phase="${i + 1}">${i + 1}. ${n}</button>`).join('')}</div>
+    <div class="test-phases">${names.map((n, i) => `<button class="btn btn--sm ${i + 1 === state.phase && !state.me.locked ? 'btn--primary' : 'btn--secondary'}" data-act="test-phase" data-phase="${i + 1}">${i + 1}. ${n}</button>`).join('')}</div>
+    <div class="test-phases test-waits"><span class="small">Odotusnäyttö:</span>${[1, 2, 3, 4].map((p) => `<button class="btn btn--sm ${p === state.phase && state.me.locked ? 'btn--primary' : 'btn--secondary'}" data-act="test-wait" data-phase="${p}" title="Vaiheen ${p} odotusnäyttö (lukittu)">${p}</button>`).join('')}</div>
     <div class="test-tools">${state.me.locked ? '<button class="btn btn--ghost" data-act="test-unlock">Avaa lukko</button>' : ''}<button class="btn btn--ghost" data-act="test-reset">Aloita alusta</button></div>
   </div></div>`;
 }
@@ -345,7 +346,12 @@ function waitingView() {
     });
   }
   const last = s.phase === 4;
-  const when = s.nextStart ? `<p class="next-start">${last ? 'Tulokset julkistetaan' : 'Seuraava vaihe alkaa'} <b>${esc(s.nextStart)}</b></p>` : '';
+  // Näytetään erikseen asetettu "seuraava vaihe alkaa" -aika ja/tai tämän vaiheen päättymisaika vaihepalkin asetuksista
+  const end = s.phaseEnds && s.phaseEnds[s.phase];
+  const when = [
+    end ? `<p class="next-start">${last ? 'Äänestys päättyy' : 'Tämä vaihe päättyy'} <b>${esc(fmtEnd(end))}</b></p>` : '',
+    s.nextStart ? `<p class="next-start">${last ? 'Tulokset julkistetaan' : 'Seuraava vaihe alkaa'} <b>${esc(s.nextStart)}</b></p>` : '',
+  ].join('');
   return `
   <section class="section screen-center">
     <div class="panel lock-panel is-locked">
@@ -884,6 +890,11 @@ document.addEventListener('click', async (e) => {
     case 'test-phase':
       previewPhase = Number(t.dataset.phase); editing = null; proposing = null;
       await refresh(); window.scrollTo(0, 0);
+      break;
+    case 'test-wait':
+      // Hyppää suoraan vaiheen odotusnäyttöön: haetaan vaihe ja merkitään se paikallisesti lukituksi
+      previewPhase = Number(t.dataset.phase); editing = null; proposing = null;
+      await refresh(); state.me.locked = true; render(); window.scrollTo(0, 0);
       break;
     case 'test-reset': editing = null; proposing = null; await refresh(); toast('Testi aloitettu alusta.'); break;
     case 'test-unlock': simulate('unlock'); break;

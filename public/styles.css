@@ -674,3 +674,6 @@ tr.drop-hover { outline: 2px dashed var(--gold); outline-offset: -2px; backgroun
 td.tester { text-align: center; }
 td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 @media (max-width: 640px) { .test-bar { position: static; } .test-bar .wrap { justify-content: center; } .test-info { width: 100%; justify-content: center; } }
+.test-waits { align-items: center; }
+.test-waits .btn { min-width: 36px; padding: 0 10px; }
+.next-start + .next-start { margin-top: -4px; }
