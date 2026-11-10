@@ -209,7 +209,7 @@ function serveImage(req, res, pathname) {
 
 // ---------- Henkilöt ja ehdokkaat ----------
 // Ehdokas on henkilö (osallistuja) + peruste. Nimi ja kuva tulevat henkilöltä, ellei ehdokkaalle ole asetettu omaa kuvaa.
-const people = () => Object.values(db.users).filter((u) => !u.root && u.nominable !== false).sort((a, b) => a.name.localeCompare(b.name, 'fi'));
+const people = () => Object.values(db.users).filter((u) => !u.root && !u.tester && u.nominable !== false).sort((a, b) => a.name.localeCompare(b.name, 'fi'));
 const nomName = (n) => (n.personId && db.users[n.personId] ? db.users[n.personId].name : n.name);
 // Kortin oma kuva voittaa; muuten henkilön kuva. Kortin oma rajaus voittaa henkilön rajauksen.
 function nomPhoto(n) {
@@ -266,16 +266,20 @@ const advanceCount = () => Math.max(1, db.settings.targetCategories - fixedCount
 
 const advancedCats = () => db.categories.filter((c) => c.advanced);
 
-function stateFor(user) {
+// opts.phase: testikäyttäjän esikatseltava vaihe (muille aina oikea vaihe)
+function stateFor(user, opts = {}) {
   const s = db.settings;
+  const preview = !!(user && user.tester && PHASES[opts.phase]);
+  const phase = preview ? Number(opts.phase) : s.phase;
   const base = {
-    phase: s.phase,
-    phaseName: PHASES[s.phase],
+    phase,
+    phaseName: PHASES[phase],
+    realPhase: s.phase,
     deadline: s.deadline,
     nextStart: s.nextStart || '',
     phaseEnds: s.phaseEnds || {},
     limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, votesP2: s.votesP2, finalists: s.finalists, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
-    me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, locked: isLocked(user) } : null,
+    me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, tester: !!user.tester, locked: user.tester ? false : isLocked(user) } : null,
   };
   if (!user) return base;
   const uid = user.id;
@@ -284,21 +288,21 @@ function stateFor(user) {
   const myNomVotes = new Set(db.nomVotes.filter((v) => v.userId === uid).map((v) => v.nomineeId));
   const myFinal = db.finalVotes[uid] || {};
 
-  const visibleCats = s.phase <= 2 ? db.categories : advancedCats();
+  const visibleCats = phase <= 2 ? db.categories : advancedCats();
   base.categories = visibleCats.map((c) => ({
     id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced,
     mine: c.by === uid, myVote: myCatVotes.has(c.id),
   }));
 
-  const visibleNoms = s.phase === 3
+  const visibleNoms = phase === 3
     ? db.nominees.filter((n) => advancedCats().some((c) => c.id === n.categoryId))
-    : s.phase >= 4 ? db.nominees.filter((n) => n.finalist) : [];
+    : phase >= 4 ? db.nominees.filter((n) => n.finalist) : [];
   base.nominees = visibleNoms.map((n) => ({
     id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), finalist: !!n.finalist,
     mine: n.by === uid, myVote: myNomVotes.has(n.id), myFinal: myFinal[n.categoryId] === n.id,
   }));
   base.people = people().map((u) => ({ id: u.id, name: u.name, photo: photoOf(u.photo, u.photoCrop) }));
-  if (s.phase === 5) {
+  if (phase === 5) {
     // Muille nimettömänä: kirjoittajaa ei lähetetä selaimeen lainkaan (vain oma-lippu poistoa varten)
     base.feedback = (db.feedback || []).map((f) => ({ id: f.id, text: f.text, createdAt: f.createdAt, mine: f.userId === uid }));
   }
@@ -307,7 +311,8 @@ function stateFor(user) {
     catVotes: myCatVotes.size,
     catProposals: db.categories.filter((c) => c.by === uid).length,
   };
-  base.lockReady = user.root ? { ok: false, reason: '' } : lockReady(user);
+  // Testikäyttäjän lukitusehdot lasketaan selaimessa paikallisen kokeilun mukaan
+  base.lockReady = user.root || user.tester ? { ok: !user.root, reason: '' } : lockReady(user);
 
 
   if (user.admin) base.admin = adminView();
@@ -341,7 +346,7 @@ function adminView() {
   const fin = finalCounts();
   return {
     participants: Object.values(db.users).filter((u) => !u.root).map((u) => ({
-      id: u.id, name: u.name, code: fmtCode(u.code), admin: !!u.admin, joined: !!u.lastLogin, photo: photoOf(u.photo, u.photoCrop), nominable: u.nominable !== false,
+      id: u.id, name: u.name, code: fmtCode(u.code), admin: !!u.admin, joined: !!u.lastLogin, photo: photoOf(u.photo, u.photoCrop), nominable: u.nominable !== false, tester: !!u.tester,
       p1: db.categories.filter((c) => c.by === u.id).length,
       p2: db.catVotes.filter((v) => v.userId === u.id).length,
       p3: db.nomVotes.filter((v) => v.userId === u.id).length,
@@ -353,7 +358,7 @@ function adminView() {
       finalVoters: db.settings.phase >= 4 ? Object.entries(db.finalVotes).filter(([, v]) => v[n.categoryId] === n.id).map(([uid]) => userName(uid) || 'poistettu').sort((a, b) => a.localeCompare(b, 'fi')) : [] })),
     nomVoteNeed: nomVoteNeed(null).reduce((sum, x) => sum + x.need, 0),
     voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nomVotes.map((v) => v.userId)).size, p4: Object.keys(db.finalVotes).length },
-    locked: Object.values(db.users).filter((u) => !u.root && isLocked(u)).length,
+    locked: Object.values(db.users).filter((u) => !u.root && !u.tester && isLocked(u)).length,
     winners: winnersFor(advancedCats().map((c) => c.id)),
     // Palauteloki: vain adminit näkevät kirjoittajan
     feedbackLog: (db.feedback || []).map((f) => ({ id: f.id, name: userName(f.userId) || 'Poistettu osallistuja', text: f.text, createdAt: f.createdAt })),
@@ -364,7 +369,7 @@ function adminView() {
 const routes = [];
 const route = (method, pattern, handler, opts = {}) => routes.push({ method, re: new RegExp('^' + pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), handler, ...opts });
 
-route('GET', '/api/state', ({ user }) => stateFor(user), { auth: false });
+route('GET', '/api/state', ({ user, req }) => stateFor(user, { phase: Number(new URL(req.url, 'http://x').searchParams.get('phase')) || null }), { auth: false });
 
 route('POST', '/api/login', ({ req, body, res }) => {
   // Tailscale serve välittää pyynnöt localhostista; oikea osoite on X-Forwarded-For-otsakkeessa
@@ -601,6 +606,7 @@ route('POST', '/api/admin/users/:id', ({ user, params, body }) => {
   if (body.regenerate) { u.code = newCode(); u.token = newToken(); u.lastLogin = null; }
   if (body.unlock && u.locked) delete u.locked[db.settings.phase];
   if ('nominable' in body) u.nominable = !!body.nominable;
+  if ('tester' in body) u.tester = !!body.tester;
   writeDb();
   return stateFor(user);
 }, { admin: true });
@@ -818,6 +824,8 @@ route('DELETE', '/api/admin/nominees/:id', ({ user, params }) => {
 
 function requireVoter(user) {
   if (user.root) fail(403, 'Ylläpitotunnuksella ei voi ehdottaa eikä äänestää. Kirjaudu omalla henkilökohtaisella koodillasi.');
+  // Testikäyttäjän toiminnot tapahtuvat vain hänen selaimessaan; palvelin ei tallenna mitään
+  if (user.tester) fail(403, 'Testikäyttäjä: muutoksia ei tallenneta.');
 }
 
 // Muokkaukset: samat säännöt kuin uutta ehdotusta tehdessä (pituus, ei kaksoiskappaleita)

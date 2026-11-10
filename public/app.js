@@ -27,7 +27,11 @@ async function api(method, url, body) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Jokin meni pieleen.');
-    if (data && 'phase' in data) { state = data; render(); }
+    if (data && 'phase' in data) {
+      state = data;
+      if (isTest()) state.lockReady = simLockReady(); // testikäyttäjän lukitusehdot paikallisesta tilasta
+      render();
+    }
     if (data && data.notice) toast(data.notice);
     return data;
   } catch (e) {
@@ -35,7 +39,10 @@ async function api(method, url, body) {
     throw e;
   }
 }
-const refresh = () => api('GET', '/api/state').catch(() => {});
+// Testikäyttäjän esikatseltava vaihe (null = oikea vaihe)
+let previewPhase = null;
+const isTest = () => !!(state && state.me && state.me.tester);
+const refresh = () => api('GET', previewPhase ? `/api/state?phase=${previewPhase}` : '/api/state').catch(() => {});
 
 let toastTimer;
 function toast(msg, isErr = false) {
@@ -96,13 +103,14 @@ function mainView() {
     ${brand()}
     <div class="whoami"><span class="muted">${esc(s.me.name)}${s.me.admin ? ' · admin' : ''}</span><button class="btn btn--ghost" data-act="logout">Kirjaudu ulos</button></div>
   </div></header>
+  ${s.me.tester ? testBar() : ''}
   <main class="wrap">
     <section class="hero">
       ${stepper()}
       ${isWaiting() ? '' : phaseHero()}
     </section>
     ${s.me.root ? `<div class="panel"><p class="eyebrow">Ylläpitotunnus</p><p style="margin:0">Tällä tunnuksella hallinnoidaan, mutta ei äänestetä. Lisää itsesi osallistujaksi alta, anna itsellesi admin-oikeus ja kirjaudu omalla koodillasi.</p></div>` : phaseBody()}
-    ${s.me.admin ? adminView() : ''}
+    ${s.me.admin ? (s.me.tester && s.phase !== s.realPhase ? `<div class="panel" style="margin-top:48px"><p class="eyebrow">Hallinta</p><p class="small muted" style="margin:0">Hallinta on piilotettu, kun esikatselet muuta kuin oikeaa vaihetta (${s.realPhase}). Palaa oikeaan vaiheeseen testipalkista.</p></div>` : adminView()) : ''}
     <footer class="footer">
       <span>Default Settings Gaala</span>
     </footer>
@@ -204,6 +212,86 @@ function phaseBody() {
   if (state.phase === 3) return phaseNominees() + lockBar();
   if (state.phase === 4) return phaseFinal() + lockBar();
   return feedbackView();
+}
+
+// ---------- Testikäyttäjä ----------
+// Testikäyttäjä voi hypätä mihin tahansa vaiheeseen ja kokeilla kaikkea. Toiminnot tehdään vain tässä
+// selaimessa (simulate), eikä palvelin tallenna mitään (palvelin myös hylkää testikäyttäjän muutokset).
+function testBar() {
+  const names = ['Ehdotukset', 'Kategoriat', 'Ehdokkaat', 'Finaali', 'Suljettu'];
+  return `
+  <div class="test-bar"><div class="wrap">
+    <div class="test-info"><span class="tag tag--red">Testitila</span><span class="small">Muutoksia ei tallenneta · oikea vaihe ${state.realPhase}</span></div>
+    <div class="test-phases">${names.map((n, i) => `<button class="btn btn--sm ${i + 1 === state.phase ? 'btn--primary' : 'btn--secondary'}" data-act="test-phase" data-phase="${i + 1}">${i + 1}. ${n}</button>`).join('')}</div>
+    <div class="test-tools">${state.me.locked ? '<button class="btn btn--ghost" data-act="test-unlock">Avaa lukko</button>' : ''}<button class="btn btn--ghost" data-act="test-reset">Aloita alusta</button></div>
+  </div></div>`;
+}
+
+const tid = () => 't' + Math.random().toString(36).slice(2, 10);
+
+// Samat lukitusehdot kuin palvelimella, laskettuna paikallisesta kokeilusta
+function simLockReady() {
+  const s = state; const L = s.limits;
+  if (s.phase === 2 && !s.categories.some((c) => c.myVote)) return { ok: false, reason: 'Äänestä vähintään yhtä kategoriaa ennen lukitsemista.' };
+  if (s.phase === 3) {
+    const miss = s.categories.filter((c) => { const ns = s.nominees.filter((n) => n.categoryId === c.id); return ns.filter((n) => n.myVote).length < Math.min(L.votesP2, ns.length); });
+    if (miss.length) return { ok: false, reason: `Käytä kaikki äänesi ennen lukitsemista. Ääniä puuttuu: ${miss.map((c) => c.name).join(', ')}.` };
+  }
+  if (s.phase === 4 && !s.nominees.some((n) => n.myFinal)) return { ok: false, reason: 'Äänestä vähintään yhtä finalistia ennen lukitsemista.' };
+  return { ok: true, reason: '' };
+}
+
+function simulate(act, d = {}) {
+  const s = state; const L = s.limits; const fail = (m) => { toast(m, true); return false; };
+  switch (act) {
+    case 'vote-cat': {
+      const c = s.categories.find((x) => x.id === d.id); if (!c || c.fixed) return false;
+      if (!c.myVote && s.used.catVotes >= L.catVotes) return fail(`Olet käyttänyt kaikki ${L.catVotes} ääntäsi. Poista ääni toisesta kategoriasta ensin.`);
+      c.myVote = !c.myVote; s.used.catVotes += c.myVote ? 1 : -1; break;
+    }
+    case 'vote-nom': {
+      const n = s.nominees.find((x) => x.id === d.id); if (!n) return false;
+      if (!n.myVote && s.nominees.filter((x) => x.categoryId === n.categoryId && x.myVote).length >= L.votesP2) return fail(`Sinulla on ${L.votesP2} ääntä per kategoria. Poista ääni ensin toiselta ehdokkaalta.`);
+      n.myVote = !n.myVote; break;
+    }
+    case 'final': { const n = s.nominees.find((x) => x.id === d.id); if (!n) return false; s.nominees.forEach((x) => { if (x.categoryId === n.categoryId) x.myFinal = x.id === n.id; }); break; }
+    case 'lock': { const r = simLockReady(); if (!r.ok) return fail(r.reason); s.me.locked = true; break; }
+    case 'unlock': s.me.locked = false; break;
+    case 'add-cat': {
+      if (s.used.catProposals >= L.maxCategoryProposals) return fail(`Voit ehdottaa enintään ${L.maxCategoryProposals} kategoriaa.`);
+      if (d.name.length < 3) return fail('Kategorian nimi on liian lyhyt.');
+      s.categories.push({ id: tid(), name: d.name, description: d.description, fixed: false, advanced: false, mine: true, myVote: false });
+      s.used.catProposals++; break;
+    }
+    case 'add-nom': {
+      const p = (s.people || []).find((x) => x.id === d.personId); if (!p) return false;
+      if (d.reason.length < 3) return fail('Kirjoita myös mistä ehdotat.');
+      if (s.nominees.filter((n) => n.categoryId === d.categoryId && n.mine).length >= L.maxNomineeProposals) return fail(`Voit ehdottaa enintään ${L.maxNomineeProposals} ehdokasta per kategoria.`);
+      s.nominees.push({ id: tid(), categoryId: d.categoryId, personId: p.id, name: p.name, reason: d.reason, photo: p.photo, finalist: false, mine: true, myVote: false, myFinal: false });
+      break;
+    }
+    case 'del': {
+      if (d.kind === 'cat') { s.categories = s.categories.filter((c) => c.id !== d.id); s.used.catProposals = s.categories.filter((c) => c.mine).length; }
+      else s.nominees = s.nominees.filter((n) => n.id !== d.id);
+      break;
+    }
+    case 'edit': {
+      if (d.kind === 'cat') { const c = s.categories.find((x) => x.id === d.id); if (c) Object.assign(c, { name: d.body.name, description: d.body.description }); }
+      else {
+        const n = s.nominees.find((x) => x.id === d.id); if (!n) return false;
+        const p = d.body.personId && (s.people || []).find((x) => x.id === d.body.personId);
+        if (p) Object.assign(n, { personId: p.id, name: p.name, photo: p.photo }); else if (d.body.name) n.name = d.body.name;
+        n.reason = d.body.reason;
+      }
+      break;
+    }
+    case 'feedback': s.feedback = [...(s.feedback || []), { id: tid(), text: d.text, createdAt: new Date().toISOString(), mine: true }]; break;
+    default: return false;
+  }
+  s.lockReady = simLockReady();
+  render();
+  if (d.msg) toast(d.msg);
+  return true;
 }
 
 // ---------- Lukitus ("Lukko sisään") ----------
@@ -470,7 +558,7 @@ function adminView() {
         <p class="eyebrow">Osallistujat</p>
         <p style="margin:0" class="h3">${a.participants.length} koodia · ${a.participants.filter((p) => p.joined).length} kirjautunut</p>
         <p class="small muted" style="margin:0">Osallistuneita: ehdotukset – ${a.voters.p1}, kategoria-äänestys – ${a.voters.p2}, ehdokkaat – ${a.voters.p3}, finaali – ${a.voters.p4}</p>
-        ${s.phase <= 4 ? `<p class="small" style="margin:0">Lukinneet tässä vaiheessa: <b style="color:var(--gold-light);font-weight:500">${a.locked} / ${a.participants.length}</b></p>` : ''}
+        ${s.phase <= 4 ? `<p class="small" style="margin:0">Lukinneet tässä vaiheessa: <b style="color:var(--gold-light);font-weight:500">${a.locked} / ${a.participants.filter((p) => !p.tester).length}</b></p>` : ''}
       </div>
     </div>
 
@@ -568,14 +656,15 @@ function participantsView() {
       <div><button class="btn btn--secondary btn--sm" type="submit">Luo koodit</button></div>
     </form>
     ${a.participants.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>Nimi</th><th>Koodi</th><th>${ph >= 4 ? 'Finaali' : 'Vaihe ' + ph} · käytetty</th><th>Ehdokkaana</th><th>Admin</th><th></th></tr></thead>
+      <thead><tr><th>Nimi</th><th>Koodi</th><th>${ph >= 4 ? 'Finaali' : 'Vaihe ' + ph} · käytetty</th><th>Ehdokkaana</th><th>Testi</th><th>Admin</th><th></th></tr></thead>
       <tbody>${a.participants.map((p) => `
         <tr data-drop-target="user" data-drop-id="${p.id}">
-          <td><div class="adm-entry">${portrait(p, 'thumb')}<div><b style="font-weight:500">${esc(p.name)}</b>${p.joined ? '' : '<div class="small muted">Ei vielä kirjautunut</div>'}
+          <td><div class="adm-entry">${portrait(p, 'thumb')}<div><b style="font-weight:500">${esc(p.name)}</b>${p.tester ? ' <span class="tag tag--red">Testi</span>' : ''}${p.joined ? '' : '<div class="small muted">Ei vielä kirjautunut</div>'}
             <div class="photo-actions">${photoButton('user', p.id, p.photo ? 'Vaihda kuva' : 'Lisää kuva')}${p.photo ? `<button class="btn btn--ghost" data-act="crop-open" data-target="user" data-id="${p.id}">Rajaa</button><button class="btn btn--ghost" data-act="photo-del" data-target="user" data-id="${p.id}">Poista kuva</button>` : ''}</div></div></div></td>
           <td><code class="code">${esc(p.code)}</code></td>
           <td class="small">${ph <= 4 ? status(p) : '–'}${p.locked && ph <= 4 ? ' <span class="tag tag--gold">Lukittu</span>' : ''}</td>
           <td class="nominable"><input type="checkbox" data-act="user-nominable" data-id="${p.id}" ${p.nominable ? 'checked' : ''} aria-label="Ehdokkaana: ${esc(p.name)}" title="Näkyykö henkilö ehdokaskorteissa"></td>
+          <td class="tester"><input type="checkbox" data-act="user-tester" data-id="${p.id}" ${p.tester ? 'checked' : ''} aria-label="Testikäyttäjä: ${esc(p.name)}" title="Testikäyttäjä voi selata kaikkia vaiheita; mitään ei tallenneta"></td>
           <td><input type="checkbox" style="width:18px;height:18px;accent-color:var(--gold)" data-act="user-admin" data-id="${p.id}" ${p.admin ? 'checked' : ''} aria-label="Admin: ${esc(p.name)}"></td>
           <td class="act">
             ${p.locked && ph <= 4 ? `<button class="btn btn--ghost" data-act="user-unlock" data-id="${p.id}" data-name="${esc(p.name)}">Avaa lukko</button>` : ''}
@@ -790,8 +879,14 @@ document.addEventListener('click', async (e) => {
   const id = t.dataset.id;
   switch (t.dataset.act) {
     case 'logout': await api('POST', '/api/logout', {}); state = { ...state, me: null }; render(); break;
-    case 'vote-cat': await api('POST', `/api/categories/${id}/vote`, {}).catch(() => {}); break;
-    case 'vote-nom': await api('POST', `/api/nominees/${id}/vote`, {}).catch(() => {}); break;
+    case 'vote-cat': if (isTest()) { simulate('vote-cat', { id }); break; } await api('POST', `/api/categories/${id}/vote`, {}).catch(() => {}); break;
+    case 'vote-nom': if (isTest()) { simulate('vote-nom', { id }); break; } await api('POST', `/api/nominees/${id}/vote`, {}).catch(() => {}); break;
+    case 'test-phase':
+      previewPhase = Number(t.dataset.phase); editing = null; proposing = null;
+      await refresh(); window.scrollTo(0, 0);
+      break;
+    case 'test-reset': editing = null; proposing = null; await refresh(); toast('Testi aloitettu alusta.'); break;
+    case 'test-unlock': simulate('unlock'); break;
     case 'copy-link': {
       const link = `${location.origin}/?k=${t.dataset.code}`;
       try { await navigator.clipboard.writeText(link); toast(`${t.dataset.name}: linkki kopioitu.`); }
@@ -799,7 +894,9 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'lock':
-      if (confirm(lockWarning() + 'Lukitaanko vastauksesi? Tämän jälkeen et voi enää muuttaa tämän vaiheen valintoja.')) await api('POST', '/api/lock', {}).catch(() => {});
+      if (!confirm(lockWarning() + 'Lukitaanko vastauksesi? Tämän jälkeen et voi enää muuttaa tämän vaiheen valintoja.')) break;
+      if (isTest()) { simulate('lock', { msg: 'Lukko sisään! (testi)' }); break; }
+      await api('POST', '/api/lock', {}).catch(() => {});
       break;
     case 'user-unlock':
       if (confirm(`Avataanko lukko (${t.dataset.name})? Hän voi taas muuttaa tämän vaiheen valintojaan.`)) await api('POST', `/api/admin/users/${id}`, { unlock: true }).then(() => toast('Lukko avattu.')).catch(() => {});
@@ -815,6 +912,7 @@ document.addEventListener('click', async (e) => {
     case 'del-own': {
       const cat = t.dataset.kind === 'cat';
       if (!confirm(cat ? 'Poistetaanko ehdottamasi kategoria?' : 'Poistetaanko ehdotuksesi? Myös muiden sille antamat äänet poistuvat.')) break;
+      if (isTest()) { simulate('del', { kind: t.dataset.kind, id, msg: 'Ehdotus poistettu.' }); break; }
       await api('DELETE', `/api/${cat ? 'categories' : 'nominees'}/${id}`, {}).then(() => toast('Ehdotus poistettu.')).catch(() => {});
       break;
     }
@@ -885,7 +983,10 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('change', async (e) => {
   const t = e.target;
   switch (t.dataset.act) {
-    case 'final': await api('POST', '/api/final', { nomineeId: t.value }).then(() => toast('Ääni tallennettu.')).catch(() => {}); break;
+    case 'final':
+      if (isTest()) { simulate('final', { id: t.value, msg: 'Ääni tallennettu.' }); break; }
+      await api('POST', '/api/final', { nomineeId: t.value }).then(() => toast('Ääni tallennettu.')).catch(() => {}); break;
+    case 'user-tester': await api('POST', `/api/admin/users/${t.dataset.id}`, { tester: t.checked }).catch(() => {}); break;
     case 'user-nominable': await api('POST', `/api/admin/users/${t.dataset.id}`, { nominable: t.checked }).catch(() => {}); break;
     case 'user-admin': await api('POST', `/api/admin/users/${t.dataset.id}`, { admin: t.checked }).catch(() => {}); break;
     case 'advance': await api('POST', `/api/admin/categories/${t.dataset.id}`, { advanced: t.checked }).catch(() => {}); break;
@@ -1033,11 +1134,13 @@ document.addEventListener('submit', async (e) => {
       clear('u-names');
       toast('Koodit luotu.');
     } else if (f.id === 'cat-form') {
+      if (isTest()) { if (simulate('add-cat', { name: v('c-name'), description: v('c-desc'), msg: 'Kategoria ehdotettu.' })) clear('c-name', 'c-desc'); return; }
       await api('POST', '/api/categories', { name: v('c-name'), description: v('c-desc') });
       clear('c-name', 'c-desc');
       toast('Kategoria ehdotettu.');
     } else if (f.dataset.form === 'nom') {
       const cid = f.dataset.cat; const reason = v('pr-' + cid);
+      if (isTest()) { proposing = null; if (simulate('add-nom', { categoryId: cid, personId: f.dataset.person, reason, msg: 'Ehdokas lisätty. Muista myös äänestää.' })) clear('pr-' + cid); return; }
       await api('POST', '/api/nominees', { categoryId: cid, personId: f.dataset.person, reason });
       clear('pr-' + cid);
       proposing = null; render();
@@ -1047,12 +1150,14 @@ document.addEventListener('submit', async (e) => {
       const body = kind === 'cat' ? { name: v('e1-' + k), description: v('e2-' + k) }
         : f.dataset.person ? { personId: v('e1-' + k), reason: v('e2-' + k) } : { name: v('e1-' + k), reason: v('e2-' + k) };
       const base = kind === 'cat' ? 'categories' : 'nominees';
+      if (isTest() && !admin) { editing = null; simulate('edit', { kind, id, body, msg: 'Muutokset tallennettu.' }); return; }
       await api('POST', admin ? `/api/admin/${base}/${id}` : `/api/${base}/${id}/edit`, body);
       editing = null; render();
       toast('Muutokset tallennettu.');
     } else if (f.id === 'feedback-form') {
       const text = v('fb-text');
       if (!text) return;
+      if (isTest()) { simulate('feedback', { text, msg: 'Palaute lähetetty.' }); clear('fb-text'); return; }
       await api('POST', '/api/feedback', { text });
       clear('fb-text');
     } else if (f.id === 'settings-form') {
@@ -1065,7 +1170,7 @@ document.addEventListener('submit', async (e) => {
 
 // Päivitä tila taustalla (ei kun käyttäjä kirjoittaa)
 setInterval(() => {
-  if (document.hidden || cropping || stats) return;
+  if (document.hidden || cropping || stats || isTest()) return;
   const a = document.activeElement;
   if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'radio') return;
   (async () => {
@@ -1077,7 +1182,7 @@ setInterval(() => {
   refresh();
 })();
 }, 15000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !isTest()) refresh(); });
 
 (async () => {
   const k = new URLSearchParams(location.search).get('k');
