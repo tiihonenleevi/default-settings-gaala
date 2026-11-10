@@ -6,14 +6,18 @@ Kaveriporukan palkintogaalan äänestyssivu. Ei riippuvuuksia: tarvitaan vain No
 
 | Vaihe | Mitä kaverit tekevät | Mitä admin tekee lopuksi |
 | --- | --- | --- |
-| 1. Kategoriat | Ehdottavat kategorioita (oletuksena max 3/hlö) ja äänestävät niitä. Ääniä on yhtä monta kuin gaalaan valitaan kategorioita äänestämällä: jos gaalassa on 8 palkintoa, ääniä on 7, koska "Vuoden sykähdyttävin hetki" on aina mukana. Yhdelle kategorialle voi antaa vain yhden äänen. | Painaa "Valitse N eniten ääniä saanutta" (tai rastii käsin) ja siirtää vaiheeseen 2. |
-| 2. Ehdokkaat | Ehdottavat ehdokkaita jatkoon päässeisiin kategorioihin. Ehdotukseen kuuluu aina "Mistä?", joten saman henkilön voi ehdottaa samaan kategoriaan eri aiheista. Jokainen ehdotus näkyy kaikille korttina, jossa on äänestysnappi. Ääniä on 2 per kategoria, ja oma ehdotus vie automaattisesti yhden äänen. Äänen voi siirtää myöhemmin. | Rastii finalistit jokaiseen kategoriaan ja siirtää vaiheeseen 3. |
-| 3. Finaali | Antavat yhden äänen per kategoria. Valintaa voi vaihtaa, kunnes äänestys suljetaan. | Siirtää vaiheeseen 4 (suljettu). |
-| 4. Suljettu | Näkevät viestin, että äänestys on päättynyt ja voittajat julkistetaan gaalassa. | Näkee hallinnassa tulokset (voittajat ja finaalin äänimäärät) ja voi kopioida ne tekstinä gaalan diaesitystä varten. |
+| 1. Kategoriaehdotukset | Ehdottavat kategorioita (oletuksena max 3/hlö). Tässä vaiheessa ei äänestetä. | Siirtää vaiheeseen 2. |
+| 2. Kategoria-äänestys | Äänestävät, mitkä kategoriat pääsevät gaalaan (oletuksena 3 ääntä/hlö, max yksi per kategoria). "Vuoden sykähdyttävin hetki" on aina mukana. | Painaa "Valitse N eniten ääniä saanutta" (N = gaalan kategoriat − kiinteät) tai rastii käsin ja siirtää vaiheeseen 3. |
+| 3. Ehdokkaat | Ehdottavat ehdokkaita jatkoon päässeisiin kategorioihin. Ehdotukseen kuuluu aina "Mistä?", joten saman henkilön voi ehdottaa samaan kategoriaan eri aiheista. Ääniä on 2 per kategoria, ja oma ehdotus vie automaattisesti yhden äänen. Äänen voi siirtää myöhemmin. | Rastii finalistit jokaiseen kategoriaan ja siirtää vaiheeseen 4. |
+| 4. Finaali | Antavat yhden äänen per kategoria. | Siirtää vaiheeseen 5 (suljettu). |
+| 5. Suljettu | Näkevät viestin, että äänestys on päättynyt ja voittajat julkistetaan gaalassa. | Näkee hallinnassa tulokset (voittajat ja finaalin äänimäärät) ja voi kopioida ne tekstinä gaalan diaesitystä varten. |
+
+Vaiheiden 1–4 lopussa on **Lukko sisään** -nappi. Kun osallistuja lukitsee vastauksensa, hän ei voi enää muuttaa sen vaiheen ehdotuksia tai ääniä, ja hänelle näytetään odotusnäyttö ("Seuraava vaihe ei ole vielä alkanut"), kunnes admin avaa seuraavan vaiheen. Lukitseminen on vahvistus, ei pakollinen: lukitsemattomatkin äänet lasketaan. Admin näkee osallistujataulukosta, ketkä ovat lukinneet, ja voi avata lukon ("Avaa lukko"), jos joku lukitsi vahingossa.
 
 - Äänet ja ehdottajat ovat anonyymejä. Kukaan ei näe, kuka ehdotti mitä tai kuka äänesti ketä.
 - Äänimäärät näkee vain admin. Finaalin äänet ovat oletuksena piilossa myös adminilta, jotta voittajat ovat yllätys myös teille. Ne saa näkyviin valinnalla "Näytä finaalin äänet".
-- Hallinnan asetuksista voi muuttaa gaalan kategoriamäärän (josta vaiheen 1 äänet lasketaan), vaiheen 2 äänet, ehdotusrajat ja näkyvän takarajan.
+- Hallinnan asetuksista voi muuttaa gaalan kategoriamäärän, kategoria-äänestyksen äänet, ehdokasvaiheen äänet, ehdotusrajat ja näkyvän takarajan.
+- Vanhan 4-vaiheisen version tietokanta muunnetaan automaattisesti uusiin vaihenumeroihin palvelimen käynnistyessä.
 - Admin voi palata aiempaan vaiheeseen sekä poistaa asiattomia ehdotuksia.
 
 ## Käynnistys
@@ -93,4 +97,5 @@ Jos kaverit näkevät tailnetissä muitakin koneita, rajatkaa pääsy ACL:llä p
 
 - `server.js` – palvelin ja API (vain Noden omat moduulit)
 - `public/index.html`, `public/app.js` – käyttöliittymä
-- `public/styles.css` – design systemin tokenit (tumma teema ensisijainen, vaalea tulee automaattisesti laitteen asetuksista)
+- `public/styles.css` – ulkoasu (tumma gaalateema)
+- `public/logo.svg` – logo (pokaali), myös välilehden kuvake

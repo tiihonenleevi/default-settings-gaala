@@ -22,7 +22,9 @@ if (!ADMIN_CODE || ADMIN_CODE.length < 8) {
 }
 
 const FIXED_CATEGORY = { name: 'Vuoden sykähdyttävin hetki', description: 'Hetki, joka jäi kaikkien mieleen.' };
-const PHASES = { 1: 'Kategoriat', 2: 'Ehdokkaat', 3: 'Finaali', 4: 'Suljettu' };
+// Vaiheet: 1 = kategorioiden ehdottaminen, 2 = äänestys gaalaan pääsevistä kategorioista,
+// 3 = ehdokkaiden ehdottaminen ja äänestys, 4 = finaali, 5 = suljettu
+const PHASES = { 1: 'Kategoriaehdotukset', 2: 'Kategoria-äänestys', 3: 'Ehdokkaat', 4: 'Finaali', 5: 'Suljettu' };
 
 // ---------- Tietokanta (JSON-tiedosto) ----------
 let db = loadDb();
@@ -33,10 +35,12 @@ function emptyDb() {
     settings: {
       phase: 1,
       deadline: '',
-      targetCategories: 8, // kategorioita gaalassa (sis. kiinteät); vaiheen 1 äänet = tämä − kiinteät
-      votesP2: 2, // ääniä per kategoria vaiheessa 2 (oma ehdotus vie yhden)
+      targetCategories: 8, // kategorioita gaalassa (sis. kiinteät); äänestyksellä valitaan tämä − kiinteät
+      catVotes: 3, // ääniä per henkilö kategoria-äänestyksessä (vaihe 2)
+      votesP2: 2, // ääniä per kategoria ehdokasvaiheessa (vaihe 3; oma ehdotus vie yhden)
       maxCategoryProposals: 3, // kategoriaehdotuksia per henkilö
       maxNomineeProposals: 3, // ehdokasehdotuksia per henkilö per kategoria
+      phaseScheme: 2, // vaiheiden numerointi (2 = viisi vaihetta)
     },
     users: {},
     categories: [{ id: fixedId, name: FIXED_CATEGORY.name, description: FIXED_CATEGORY.description, fixed: true, advanced: true, by: null, createdAt: now() }],
@@ -58,6 +62,13 @@ function loadDb() {
   const st = data.settings;
   if (st.targetCategories == null) st.targetCategories = (st.votesP1 || 7) + 1;
   delete st.votesP1;
+  if (st.catVotes == null) st.catVotes = 3;
+  // Vanha 4-vaiheinen versio (1 kategoriat, 2 ehdokkaat, 3 finaali, 4 suljettu) → uudet numerot.
+  // Vanha vaihe 1 (ehdotukset + äänet samassa) pysyy vaiheena 1; muut siirtyvät yhdellä eteenpäin.
+  if (!st.phaseScheme) {
+    if (st.phase >= 2) st.phase += 1;
+    st.phaseScheme = 2;
+  }
   return data;
 }
 
@@ -147,8 +158,8 @@ function send(res, status, body) {
 
 // ---------- Näkymä käyttäjälle ----------
 const fixedCount = () => db.categories.filter((c) => c.fixed).length;
-// Vaiheen 1 äänet = gaalaan tulevien kategorioiden määrä ilman kiinteitä (ne ovat mukana joka tapauksessa)
-const votesP1 = () => Math.max(1, db.settings.targetCategories - fixedCount());
+// Äänestyksellä valittavien kategorioiden määrä = gaalan kategoriat ilman kiinteitä (ne ovat mukana joka tapauksessa)
+const advanceCount = () => Math.max(1, db.settings.targetCategories - fixedCount());
 
 const advancedCats = () => db.categories.filter((c) => c.advanced);
 
@@ -158,8 +169,8 @@ function stateFor(user) {
     phase: s.phase,
     phaseName: PHASES[s.phase],
     deadline: s.deadline,
-    limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), votesP1: votesP1(), votesP2: s.votesP2, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
-    me: user ? { name: user.name, admin: !!user.admin, root: !!user.root } : null,
+    limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, votesP2: s.votesP2, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
+    me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, locked: isLocked(user) } : null,
   };
   if (!user) return base;
   const uid = user.id;
@@ -168,15 +179,15 @@ function stateFor(user) {
   const myNomVotes = new Set(db.nomVotes.filter((v) => v.userId === uid).map((v) => v.nomineeId));
   const myFinal = db.finalVotes[uid] || {};
 
-  const visibleCats = s.phase === 1 ? db.categories : advancedCats();
+  const visibleCats = s.phase <= 2 ? db.categories : advancedCats();
   base.categories = visibleCats.map((c) => ({
     id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced,
     mine: c.by === uid, myVote: myCatVotes.has(c.id),
   }));
 
-  const visibleNoms = s.phase === 2
+  const visibleNoms = s.phase === 3
     ? db.nominees.filter((n) => advancedCats().some((c) => c.id === n.categoryId))
-    : s.phase >= 3 ? db.nominees.filter((n) => n.finalist) : [];
+    : s.phase >= 4 ? db.nominees.filter((n) => n.finalist) : [];
   base.nominees = visibleNoms.map((n) => ({
     id: n.id, categoryId: n.categoryId, name: n.name, reason: n.reason, finalist: !!n.finalist,
     mine: n.by === uid, myVote: myNomVotes.has(n.id), myFinal: myFinal[n.categoryId] === n.id,
@@ -220,13 +231,16 @@ function adminView() {
   return {
     participants: Object.values(db.users).filter((u) => !u.root).map((u) => ({
       id: u.id, name: u.name, code: fmtCode(u.code), admin: !!u.admin, joined: !!u.lastLogin,
-      p1: db.catVotes.some((v) => v.userId === u.id),
-      p2: db.nomVotes.some((v) => v.userId === u.id),
-      p3: Object.keys(db.finalVotes[u.id] || {}).length,
+      p1: db.categories.filter((c) => c.by === u.id).length,
+      p2: db.catVotes.some((v) => v.userId === u.id),
+      p3: db.nomVotes.some((v) => v.userId === u.id),
+      p4: Object.keys(db.finalVotes[u.id] || {}).length,
+      locked: isLocked(u),
     })).sort((a, b) => a.name.localeCompare(b.name, 'fi')),
     categories: db.categories.map((c) => ({ id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, votes: catCounts[c.id] || 0 })),
     nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, name: n.name, reason: n.reason, finalist: !!n.finalist, votes: nomCounts[n.id] || 0, finalVotes: fin[n.id] || 0 })),
-    voters: { p1: new Set(db.catVotes.map((v) => v.userId)).size, p2: new Set(db.nomVotes.map((v) => v.userId)).size, p3: Object.keys(db.finalVotes).length },
+    voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nomVotes.map((v) => v.userId)).size, p4: Object.keys(db.finalVotes).length },
+    locked: Object.values(db.users).filter((u) => !u.root && isLocked(u)).length,
     winners: winnersFor(advancedCats().map((c) => c.id)),
   };
 }
@@ -266,10 +280,11 @@ route('POST', '/api/logout', ({ res }) => {
   return { ok: true };
 }, { auth: false });
 
-// Vaihe 1: kategoriat
+// Vaihe 1: kategorioiden ehdottaminen (ei ääniä; enintään maxCategoryProposals per henkilö)
 route('POST', '/api/categories', ({ user, body }) => {
   requirePhase(1);
   requireVoter(user);
+  requireUnlocked(user);
   const name = clean(body.name, 60);
   const description = clean(body.description, 160);
   if (name.length < 3) fail(400, 'Kategorian nimi on liian lyhyt.');
@@ -281,26 +296,29 @@ route('POST', '/api/categories', ({ user, body }) => {
   return stateFor(user);
 });
 
+// Vaihe 2: äänestys gaalaan pääsevistä kategorioista (catVotes ääntä per henkilö)
 route('POST', '/api/categories/:id/vote', ({ user, params }) => {
-  requirePhase(1);
+  requirePhase(2);
   requireVoter(user);
+  requireUnlocked(user);
   const cat = db.categories.find((c) => c.id === params.id) || fail(404, 'Kategoriaa ei löydy.');
   if (cat.fixed) fail(400, 'Tämä kategoria on mukana joka tapauksessa.');
   const i = db.catVotes.findIndex((v) => v.userId === user.id && v.categoryId === cat.id);
   if (i >= 0) db.catVotes.splice(i, 1);
   else {
     const used = db.catVotes.filter((v) => v.userId === user.id).length;
-    if (used >= votesP1()) fail(400, `Olet käyttänyt kaikki ${votesP1()} ääntäsi. Poista ääni toisesta kategoriasta ensin.`);
+    if (used >= db.settings.catVotes) fail(400, `Olet käyttänyt kaikki ${db.settings.catVotes} ääntäsi. Poista ääni toisesta kategoriasta ensin.`);
     db.catVotes.push({ userId: user.id, categoryId: cat.id });
   }
   writeDb();
   return stateFor(user);
 });
 
-// Vaihe 2: ehdokkaat
+// Vaihe 3: ehdokkaat
 route('POST', '/api/nominees', ({ user, body }) => {
-  requirePhase(2);
+  requirePhase(3);
   requireVoter(user);
+  requireUnlocked(user);
   const cat = advancedCats().find((c) => c.id === body.categoryId) || fail(404, 'Kategoriaa ei löydy.');
   const name = clean(body.name, 60);
   const reason = clean(body.reason, 160);
@@ -321,8 +339,9 @@ route('POST', '/api/nominees', ({ user, body }) => {
 });
 
 route('POST', '/api/nominees/:id/vote', ({ user, params }) => {
-  requirePhase(2);
+  requirePhase(3);
   requireVoter(user);
+  requireUnlocked(user);
   const nom = db.nominees.find((n) => n.id === params.id) || fail(404, 'Ehdokasta ei löydy.');
   const i = db.nomVotes.findIndex((v) => v.userId === user.id && v.nomineeId === nom.id);
   if (i >= 0) db.nomVotes.splice(i, 1);
@@ -336,14 +355,26 @@ route('POST', '/api/nominees/:id/vote', ({ user, params }) => {
   return stateFor(user);
 });
 
-// Vaihe 3: finaali
+// Vaihe 4: finaali
 route('POST', '/api/final', ({ user, body }) => {
-  requirePhase(3);
+  requirePhase(4);
   requireVoter(user);
+  requireUnlocked(user);
   const nom = db.nominees.find((n) => n.id === body.nomineeId && n.finalist) || fail(404, 'Finalistia ei löydy.');
   db.finalVotes[user.id] = { ...(db.finalVotes[user.id] || {}), [nom.categoryId]: nom.id };
   writeDb();
   return stateFor(user);
+});
+
+// Vastausten lukitus ("Lukko sisään"): vahvistaa, että osallistuja on valmis tämän vaiheen kanssa.
+// Lukituksen jälkeen vaiheen ääniä ja ehdotuksia ei voi muuttaa; järjestäjä voi avata lukon hallinnasta.
+route('POST', '/api/lock', ({ user }) => {
+  requireVoter(user);
+  if (db.settings.phase > 4) fail(409, 'Äänestys on jo suljettu.');
+  requireUnlocked(user);
+  user.locked = { ...(user.locked || {}), [db.settings.phase]: now() };
+  writeDb();
+  return { ...stateFor(user), notice: 'Lukko sisään! Vastauksesi tähän vaiheeseen on tallennettu.' };
 });
 
 // ---------- Admin ----------
@@ -371,6 +402,7 @@ route('POST', '/api/admin/users/:id', ({ user, params, body }) => {
   }
   if ('name' in body) { const n = clean(body.name, 40); if (n) u.name = n; }
   if (body.regenerate) { u.code = newCode(); u.token = newToken(); u.lastLogin = null; }
+  if (body.unlock && u.locked) delete u.locked[db.settings.phase];
   writeDb();
   return stateFor(user);
 }, { admin: true });
@@ -390,8 +422,9 @@ route('DELETE', '/api/admin/users/:id', ({ user, params }) => {
 route('POST', '/api/admin/phase', ({ user, body }) => {
   const phase = Number(body.phase);
   if (!PHASES[phase]) fail(400, 'Tuntematon vaihe.');
-  if (phase === 2 && advancedCats().length === 0) fail(400, 'Valitse ensin jatkoon pääsevät kategoriat.');
-  if (phase >= 3) {
+  // Kiinteä kategoria on aina mukana, joten tarkistetaan vain äänestyksellä valittavat
+  if (phase >= 3 && !advancedCats().some((c) => !c.fixed)) fail(400, 'Valitse ensin jatkoon pääsevät kategoriat.');
+  if (phase >= 4) {
     const missing = advancedCats().filter((c) => !db.nominees.some((n) => n.categoryId === c.id && n.finalist));
     if (missing.length) fail(400, `Valitse finalistit myös näihin: ${missing.map((c) => c.name).join(', ')}.`);
   }
@@ -403,7 +436,7 @@ route('POST', '/api/admin/phase', ({ user, body }) => {
 route('POST', '/api/admin/settings', ({ user, body }) => {
   const s = db.settings;
   if ('deadline' in body) s.deadline = clean(body.deadline, 80);
-  for (const k of ['targetCategories', 'votesP2', 'maxCategoryProposals', 'maxNomineeProposals']) {
+  for (const k of ['targetCategories', 'catVotes', 'votesP2', 'maxCategoryProposals', 'maxNomineeProposals']) {
     if (k in body) {
       const n = Math.round(Number(body[k]));
       if (!(n >= 1 && n <= 50)) fail(400, 'Lukujen pitää olla välillä 1–50.');
@@ -419,7 +452,7 @@ route('POST', '/api/admin/categories/auto-advance', ({ user }) => {
   const counts = countBy(db.catVotes, 'categoryId');
   const ranked = db.categories.filter((c) => !c.fixed)
     .sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0) || a.createdAt.localeCompare(b.createdAt));
-  const n = votesP1();
+  const n = advanceCount();
   ranked.forEach((c, i) => { c.advanced = i < n; });
   writeDb();
   const cutoff = counts[ranked[n - 1]?.id] || 0;
@@ -472,6 +505,15 @@ route('DELETE', '/api/admin/nominees/:id', ({ user, params }) => {
 
 function requireVoter(user) {
   if (user.root) fail(403, 'Ylläpitotunnuksella ei voi ehdottaa eikä äänestää. Kirjaudu omalla henkilökohtaisella koodillasi.');
+}
+
+// Lukitus tallennetaan käyttäjälle vaihekohtaisesti: user.locked = { "1": aikaleima, ... }
+function isLocked(user) {
+  return !!(user && user.locked && user.locked[db.settings.phase]);
+}
+
+function requireUnlocked(user) {
+  if (isLocked(user)) fail(409, 'Olet jo lukinnut vastauksesi tähän vaiheeseen. Pyydä järjestäjää avaamaan lukko, jos haluat muuttaa jotain.');
 }
 
 function requirePhase(p) {
