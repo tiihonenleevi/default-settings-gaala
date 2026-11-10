@@ -15,6 +15,7 @@ const ADMIN_CODE = process.env.ADMIN_CODE || '';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const IMG_DIR = path.join(DATA_DIR, 'images'); // osallistujien ja ehdokkaiden kuvat (samassa volyymissa kuin db.json)
 
 if (!ADMIN_CODE || ADMIN_CODE.length < 8) {
   console.error('Aseta ADMIN_CODE, vähintään 8 merkkiä (.env-tiedostoon tai ympäristömuuttujiin).');
@@ -39,7 +40,8 @@ function emptyDb() {
       catVotes: 3, // ääniä per henkilö kategoria-äänestyksessä (vaihe 2)
       votesP2: 2, // ääniä per kategoria ehdokasvaiheessa (vaihe 3; oma ehdotus vie yhden)
       maxCategoryProposals: 3, // kategoriaehdotuksia per henkilö
-      maxNomineeProposals: 3, // ehdokasehdotuksia per henkilö per kategoria
+      maxNomineeProposals: 2, // ehdokasehdotuksia per henkilö per kategoria
+      finalists: 3, // automaattisesti valittavia finalisteja per kategoria
       phaseScheme: 2, // vaiheiden numerointi (2 = viisi vaihetta)
     },
     users: {},
@@ -53,6 +55,7 @@ function emptyDb() {
 
 function loadDb() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(IMG_DIR, { recursive: true });
   if (!fs.existsSync(DB_FILE)) {
     const fresh = emptyDb();
     writeDb(fresh);
@@ -63,6 +66,7 @@ function loadDb() {
   if (st.targetCategories == null) st.targetCategories = (st.votesP1 || 7) + 1;
   delete st.votesP1;
   if (st.catVotes == null) st.catVotes = 3;
+  if (st.finalists == null) st.finalists = 3;
   // Vanha 4-vaiheinen versio (1 kategoriat, 2 ehdokkaat, 3 finaali, 4 suljettu) → uudet numerot.
   // Vanha vaihe 1 (ehdotukset + äänet samassa) pysyy vaiheena 1; muut siirtyvät yhdellä eteenpäin.
   if (!st.phaseScheme) {
@@ -139,10 +143,10 @@ function setSession(res, token) {
   res.setHeader('Set-Cookie', `gaala=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${60 * 60 * 24 * 180}`);
 }
 
-function readBody(req) {
+function readBody(req, max = 20000) {
   return new Promise((resolve, reject) => {
     let size = 0; const chunks = [];
-    req.on('data', (c) => { size += c.length; if (size > 20000) { reject(new HttpError(413, 'Liian suuri pyyntö')); req.destroy(); } else chunks.push(c); });
+    req.on('data', (c) => { size += c.length; if (size > max) { reject(new HttpError(413, 'Liian suuri pyyntö')); req.destroy(); } else chunks.push(c); });
     req.on('end', () => {
       if (!chunks.length) return resolve({});
       try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { reject(new HttpError(400, 'Virheellinen JSON')); }
@@ -154,6 +158,88 @@ function readBody(req) {
 function send(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(body));
+}
+
+// ---------- Kuvat ----------
+// Selain pienentää kuvan ennen lähetystä (JPEG, max 800 px), joten palvelin vain tarkistaa ja tallentaa sen.
+// Tiedostonimi on satunnainen id, joten vanha kuva ei jää selaimen välimuistiin vaihdon jälkeen.
+const IMG_TYPES = { jpg: [0xff, 0xd8, 0xff], png: [0x89, 0x50, 0x4e, 0x47], webp: [0x52, 0x49, 0x46, 0x46] };
+const IMG_NAME = /^[0-9a-f]{16}\.(jpg|png|webp)$/;
+
+function saveImage(dataUrl) {
+  const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
+  if (!m) fail(400, 'Kuvan pitää olla JPEG-, PNG- tai WebP-muodossa.');
+  const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+  const buf = Buffer.from(m[2], 'base64');
+  if (buf.length > 3 * 1024 * 1024) fail(413, 'Kuva on liian suuri (max 3 Mt).');
+  if (!IMG_TYPES[ext].every((b, i) => buf[i] === b)) fail(400, 'Tiedosto ei ole kelvollinen kuva.');
+  const name = `${newId()}.${ext}`;
+  fs.writeFileSync(path.join(IMG_DIR, name), buf);
+  return name;
+}
+
+function deleteImage(name) {
+  if (name && IMG_NAME.test(name)) fs.rm(path.join(IMG_DIR, name), { force: true }, () => {});
+}
+
+const imgUrl = (name) => (name ? `/images/${name}` : null);
+
+// Kuvat näytetään vain kirjautuneille (sivu on julkisessa osoitteessa)
+function serveImage(req, res, pathname) {
+  const name = pathname.slice('/images/'.length);
+  if (!currentUser(req) || !IMG_NAME.test(name)) { res.writeHead(404); return res.end(); }
+  fs.readFile(path.join(IMG_DIR, name), (err, data) => {
+    if (err) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(name)], 'Cache-Control': 'private, max-age=31536000, immutable' });
+    res.end(data);
+  });
+}
+
+// ---------- Henkilöt ja ehdokkaat ----------
+// Ehdokas on henkilö (osallistuja) + peruste. Nimi ja kuva tulevat henkilöltä, ellei ehdokkaalle ole asetettu omaa kuvaa.
+const people = () => Object.values(db.users).filter((u) => !u.root).sort((a, b) => a.name.localeCompare(b.name, 'fi'));
+const nomName = (n) => (n.personId && db.users[n.personId] ? db.users[n.personId].name : n.name);
+const nomPhoto = (n) => imgUrl(n.photo || (n.personId && db.users[n.personId] ? db.users[n.personId].photo : null));
+const userName = (id) => (id && db.users[id] ? db.users[id].name : null);
+
+// Ehdokasvaiheen äänivaatimus: jokaisessa kategoriassa käytettävä kaikki äänet (tai niin monta kuin ehdokkaita on)
+function nomVoteNeed(uid) {
+  return advancedCats().map((c) => {
+    const ids = new Set(db.nominees.filter((n) => n.categoryId === c.id).map((n) => n.id));
+    const need = Math.min(db.settings.votesP2, ids.size);
+    const have = uid ? db.nomVotes.filter((v) => v.userId === uid && ids.has(v.nomineeId)).length : 0;
+    return { cat: c, need, have };
+  });
+}
+
+// Voiko osallistuja lukita tämän vaiheen? Sama tarkistus palvelimella ja napissa.
+function lockReady(user) {
+  const p = db.settings.phase; const uid = user.id;
+  if (p === 2 && !db.catVotes.some((v) => v.userId === uid)) return { ok: false, reason: 'Äänestä vähintään yhtä kategoriaa ennen lukitsemista.' };
+  if (p === 3) {
+    const missing = nomVoteNeed(uid).filter((x) => x.have < x.need);
+    if (missing.length) return { ok: false, reason: `Käytä kaikki äänesi ennen lukitsemista. Ääniä puuttuu: ${missing.map((x) => `${x.cat.name} (${x.have}/${x.need})`).join(', ')}.` };
+  }
+  if (p === 4 && !Object.keys(db.finalVotes[uid] || {}).length) return { ok: false, reason: 'Äänestä vähintään yhtä finalistia ennen lukitsemista.' };
+  return { ok: true, reason: '' };
+}
+
+function removeCategory(cat) {
+  const doomed = db.nominees.filter((n) => n.categoryId === cat.id);
+  const nomIds = new Set(doomed.map((n) => n.id));
+  doomed.forEach((n) => deleteImage(n.photo));
+  db.categories = db.categories.filter((c) => c.id !== cat.id);
+  db.catVotes = db.catVotes.filter((v) => v.categoryId !== cat.id);
+  db.nominees = db.nominees.filter((n) => !nomIds.has(n.id));
+  db.nomVotes = db.nomVotes.filter((v) => !nomIds.has(v.nomineeId));
+  for (const fv of Object.values(db.finalVotes)) delete fv[cat.id];
+}
+
+function removeNominee(nom) {
+  deleteImage(nom.photo);
+  db.nominees = db.nominees.filter((n) => n.id !== nom.id);
+  db.nomVotes = db.nomVotes.filter((v) => v.nomineeId !== nom.id);
+  for (const fv of Object.values(db.finalVotes)) if (fv[nom.categoryId] === nom.id) delete fv[nom.categoryId];
 }
 
 // ---------- Näkymä käyttäjälle ----------
@@ -169,7 +255,7 @@ function stateFor(user) {
     phase: s.phase,
     phaseName: PHASES[s.phase],
     deadline: s.deadline,
-    limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, votesP2: s.votesP2, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
+    limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, votesP2: s.votesP2, finalists: s.finalists, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
     me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, locked: isLocked(user) } : null,
   };
   if (!user) return base;
@@ -189,14 +275,16 @@ function stateFor(user) {
     ? db.nominees.filter((n) => advancedCats().some((c) => c.id === n.categoryId))
     : s.phase >= 4 ? db.nominees.filter((n) => n.finalist) : [];
   base.nominees = visibleNoms.map((n) => ({
-    id: n.id, categoryId: n.categoryId, name: n.name, reason: n.reason, finalist: !!n.finalist,
+    id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), finalist: !!n.finalist,
     mine: n.by === uid, myVote: myNomVotes.has(n.id), myFinal: myFinal[n.categoryId] === n.id,
   }));
+  base.people = people().map((u) => ({ id: u.id, name: u.name, photo: imgUrl(u.photo) }));
 
   base.used = {
     catVotes: myCatVotes.size,
     catProposals: db.categories.filter((c) => c.by === uid).length,
   };
+  base.lockReady = user.root ? { ok: false, reason: '' } : lockReady(user);
 
 
   if (user.admin) base.admin = adminView();
@@ -230,15 +318,16 @@ function adminView() {
   const fin = finalCounts();
   return {
     participants: Object.values(db.users).filter((u) => !u.root).map((u) => ({
-      id: u.id, name: u.name, code: fmtCode(u.code), admin: !!u.admin, joined: !!u.lastLogin,
+      id: u.id, name: u.name, code: fmtCode(u.code), admin: !!u.admin, joined: !!u.lastLogin, photo: imgUrl(u.photo),
       p1: db.categories.filter((c) => c.by === u.id).length,
-      p2: db.catVotes.some((v) => v.userId === u.id),
-      p3: db.nomVotes.some((v) => v.userId === u.id),
+      p2: db.catVotes.filter((v) => v.userId === u.id).length,
+      p3: db.nomVotes.filter((v) => v.userId === u.id).length,
       p4: Object.keys(db.finalVotes[u.id] || {}).length,
       locked: isLocked(u),
     })).sort((a, b) => a.name.localeCompare(b.name, 'fi')),
-    categories: db.categories.map((c) => ({ id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, votes: catCounts[c.id] || 0 })),
-    nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, name: n.name, reason: n.reason, finalist: !!n.finalist, votes: nomCounts[n.id] || 0, finalVotes: fin[n.id] || 0 })),
+    categories: db.categories.map((c) => ({ id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, votes: catCounts[c.id] || 0, byName: userName(c.by) })),
+    nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), ownPhoto: !!n.photo, finalist: !!n.finalist, votes: nomCounts[n.id] || 0, finalVotes: fin[n.id] || 0, byName: userName(n.by) })),
+    nomVoteNeed: nomVoteNeed(null).reduce((sum, x) => sum + x.need, 0),
     voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nomVotes.map((v) => v.userId)).size, p4: Object.keys(db.finalVotes).length },
     locked: Object.values(db.users).filter((u) => !u.root && isLocked(u)).length,
     winners: winnersFor(advancedCats().map((c) => c.id)),
@@ -307,6 +396,17 @@ route('POST', '/api/categories/:id/edit', ({ user, params, body }) => {
   return stateFor(user);
 });
 
+// Osallistuja poistaa oman kategoriaehdotuksensa (vaihe 1, ennen lukitusta)
+route('DELETE', '/api/categories/:id', ({ user, params }) => {
+  requirePhase(1);
+  requireVoter(user);
+  requireUnlocked(user);
+  const cat = db.categories.find((c) => c.id === params.id && c.by === user.id) || fail(404, 'Voit poistaa vain omia ehdotuksiasi.');
+  removeCategory(cat);
+  writeDb();
+  return stateFor(user);
+});
+
 // Vaihe 2: äänestys gaalaan pääsevistä kategorioista (catVotes ääntä per henkilö)
 route('POST', '/api/categories/:id/vote', ({ user, params }) => {
   requirePhase(2);
@@ -331,20 +431,26 @@ route('POST', '/api/nominees', ({ user, body }) => {
   requireVoter(user);
   requireUnlocked(user);
   const cat = advancedCats().find((c) => c.id === body.categoryId) || fail(404, 'Kategoriaa ei löydy.');
-  const name = clean(body.name, 60);
+  const person = db.users[body.personId];
+  if (!person || person.root) fail(404, 'Valitse ehdokas korteista.');
   const reason = clean(body.reason, 160);
-  if (name.length < 2) fail(400, 'Kirjoita ehdokkaan nimi.');
   if (reason.length < 3) fail(400, 'Kirjoita myös mistä ehdotat – sama henkilö voi olla ehdolla useammasta aiheesta.');
-  if (db.nominees.some((n) => n.categoryId === cat.id && norm(n.name) === norm(name) && norm(n.reason) === norm(reason))) fail(409, 'Sama ehdotus on jo listalla – äänestä sitä.');
+  if (db.nominees.some((n) => n.categoryId === cat.id && n.personId === person.id && norm(n.reason) === norm(reason))) fail(409, 'Sama ehdotus on jo listalla – äänestä sitä.');
   const mine = db.nominees.filter((n) => n.categoryId === cat.id && n.by === user.id).length;
   if (mine >= db.settings.maxNomineeProposals) fail(400, `Voit ehdottaa enintään ${db.settings.maxNomineeProposals} ehdokasta per kategoria.`);
-  // Ehdotus vie automaattisesti yhden äänen, joten vapaa ääni tarvitaan
-  const inCat = new Set(db.nominees.filter((n) => n.categoryId === cat.id).map((n) => n.id));
-  const used = db.nomVotes.filter((v) => v.userId === user.id && inCat.has(v.nomineeId)).length;
-  if (used >= db.settings.votesP2) fail(400, `Ehdotus vie yhden äänesi, mutta olet jo käyttänyt kaikki ${db.settings.votesP2} ääntä tässä kategoriassa. Poista ensin ääni joltain toiselta.`);
-  const nom = { id: newId(), categoryId: cat.id, name, reason, finalist: false, by: user.id, createdAt: now() };
-  db.nominees.push(nom);
-  db.nomVotes.push({ userId: user.id, nomineeId: nom.id });
+  // Ehdotus ei anna ääntä: osallistuja äänestää erikseen
+  db.nominees.push({ id: newId(), categoryId: cat.id, personId: person.id, name: person.name, reason, photo: null, finalist: false, by: user.id, createdAt: now() });
+  writeDb();
+  return stateFor(user);
+});
+
+// Osallistuja poistaa oman ehdokasehdotuksensa (vaihe 3, ennen lukitusta). Myös muiden äänet sille poistuvat.
+route('DELETE', '/api/nominees/:id', ({ user, params }) => {
+  requirePhase(3);
+  requireVoter(user);
+  requireUnlocked(user);
+  const nom = db.nominees.find((n) => n.id === params.id && n.by === user.id) || fail(404, 'Voit poistaa vain omia ehdotuksiasi.');
+  removeNominee(nom);
   writeDb();
   return stateFor(user);
 });
@@ -394,6 +500,8 @@ route('POST', '/api/lock', ({ user }) => {
   requireVoter(user);
   if (db.settings.phase > 4) fail(409, 'Äänestys on jo suljettu.');
   requireUnlocked(user);
+  const ready = lockReady(user);
+  if (!ready.ok) fail(400, ready.reason);
   user.locked = { ...(user.locked || {}), [db.settings.phase]: now() };
   writeDb();
   return { ...stateFor(user), notice: 'Lukko sisään! Vastauksesi tähän vaiheeseen on tallennettu.' };
@@ -429,10 +537,31 @@ route('POST', '/api/admin/users/:id', ({ user, params, body }) => {
   return stateFor(user);
 }, { admin: true });
 
+// Osallistujan (henkilön) kuva: näkyy kaikissa hänen ehdokaskorteissaan, ellei kortilla ole omaa kuvaa
+route('POST', '/api/admin/users/:id/photo', ({ user, params, body }) => {
+  const u = db.users[params.id];
+  if (!u || u.root) fail(404, 'Osallistujaa ei löydy.');
+  const name = saveImage(body.image);
+  deleteImage(u.photo);
+  u.photo = name;
+  writeDb();
+  return { ...stateFor(user), notice: `Kuva tallennettu: ${u.name}.` };
+}, { admin: true, maxBody: 4.5 * 1024 * 1024 });
+
+route('DELETE', '/api/admin/users/:id/photo', ({ user, params }) => {
+  const u = db.users[params.id];
+  if (!u || u.root) fail(404, 'Osallistujaa ei löydy.');
+  deleteImage(u.photo);
+  u.photo = null;
+  writeDb();
+  return stateFor(user);
+}, { admin: true });
+
 route('DELETE', '/api/admin/users/:id', ({ user, params }) => {
   const u = db.users[params.id];
   if (!u || u.root) fail(404, 'Osallistujaa ei löydy.');
   if (u.id === user.id) fail(400, 'Et voi poistaa itseäsi.');
+  deleteImage(u.photo);
   delete db.users[u.id];
   db.catVotes = db.catVotes.filter((v) => v.userId !== u.id);
   db.nomVotes = db.nomVotes.filter((v) => v.userId !== u.id);
@@ -458,7 +587,7 @@ route('POST', '/api/admin/phase', ({ user, body }) => {
 route('POST', '/api/admin/settings', ({ user, body }) => {
   const s = db.settings;
   if ('deadline' in body) s.deadline = clean(body.deadline, 80);
-  for (const k of ['targetCategories', 'catVotes', 'votesP2', 'maxCategoryProposals', 'maxNomineeProposals']) {
+  for (const k of ['targetCategories', 'catVotes', 'votesP2', 'maxCategoryProposals', 'maxNomineeProposals', 'finalists']) {
     if (k in body) {
       const n = Math.round(Number(body[k]));
       if (!(n >= 1 && n <= 50)) fail(400, 'Lukujen pitää olla välillä 1–50.');
@@ -493,14 +622,27 @@ route('POST', '/api/admin/categories/:id', ({ user, params, body }) => {
 route('DELETE', '/api/admin/categories/:id', ({ user, params }) => {
   const cat = db.categories.find((c) => c.id === params.id) || fail(404, 'Kategoriaa ei löydy.');
   if (cat.fixed) fail(400, 'Kiinteää kategoriaa ei voi poistaa.');
-  const nomIds = new Set(db.nominees.filter((n) => n.categoryId === cat.id).map((n) => n.id));
-  db.categories = db.categories.filter((c) => c.id !== cat.id);
-  db.catVotes = db.catVotes.filter((v) => v.categoryId !== cat.id);
-  db.nominees = db.nominees.filter((n) => !nomIds.has(n.id));
-  db.nomVotes = db.nomVotes.filter((v) => !nomIds.has(v.nomineeId));
-  for (const fv of Object.values(db.finalVotes)) delete fv[cat.id];
+  removeCategory(cat);
   writeDb();
   return stateFor(user);
+}, { admin: true });
+
+// Valitse jokaiseen kategoriaan N eniten ääniä saanutta finalistiksi (N = asetus finalists)
+route('POST', '/api/admin/nominees/auto-finalists', ({ user }) => {
+  const counts = countBy(db.nomVotes, 'nomineeId');
+  const n = db.settings.finalists; const ties = [];
+  for (const c of advancedCats()) {
+    const ranked = db.nominees.filter((x) => x.categoryId === c.id)
+      .sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0) || a.createdAt.localeCompare(b.createdAt));
+    ranked.forEach((x, i) => {
+      x.finalist = i < n;
+      if (!x.finalist) for (const fv of Object.values(db.finalVotes)) if (fv[c.id] === x.id) delete fv[c.id];
+    });
+    const cutoff = counts[ranked[n - 1]?.id] || 0;
+    if (ranked.length > n && cutoff > 0 && (counts[ranked[n]?.id] || 0) === cutoff) ties.push(c.name);
+  }
+  writeDb();
+  return { ...stateFor(user), notice: ties.length ? `Valittu ${n} eniten ääniä saanutta per kategoria. Tasapeli viimeisellä paikalla: ${ties.join(', ')} – tarkista.` : `Valittu ${n} eniten ääniä saanutta per kategoria.` };
 }, { admin: true });
 
 route('POST', '/api/admin/nominees/:id', ({ user, params, body }) => {
@@ -509,16 +651,32 @@ route('POST', '/api/admin/nominees/:id', ({ user, params, body }) => {
     nom.finalist = !!body.finalist;
     if (!nom.finalist) for (const fv of Object.values(db.finalVotes)) if (fv[nom.categoryId] === nom.id) delete fv[nom.categoryId];
   }
-  if ('name' in body || 'reason' in body) applyNomineeEdit(nom, body);
+  if ('name' in body || 'reason' in body || 'personId' in body) applyNomineeEdit(nom, body);
+  writeDb();
+  return stateFor(user);
+}, { admin: true });
+
+// Ehdokaskortin oma kuva (korvaa henkilön kuvan tässä kortissa)
+route('POST', '/api/admin/nominees/:id/photo', ({ user, params, body }) => {
+  const nom = db.nominees.find((n) => n.id === params.id) || fail(404, 'Ehdokasta ei löydy.');
+  const name = saveImage(body.image);
+  deleteImage(nom.photo);
+  nom.photo = name;
+  writeDb();
+  return { ...stateFor(user), notice: 'Ehdokaskortin kuva tallennettu.' };
+}, { admin: true, maxBody: 4.5 * 1024 * 1024 });
+
+route('DELETE', '/api/admin/nominees/:id/photo', ({ user, params }) => {
+  const nom = db.nominees.find((n) => n.id === params.id) || fail(404, 'Ehdokasta ei löydy.');
+  deleteImage(nom.photo);
+  nom.photo = null;
   writeDb();
   return stateFor(user);
 }, { admin: true });
 
 route('DELETE', '/api/admin/nominees/:id', ({ user, params }) => {
   const nom = db.nominees.find((n) => n.id === params.id) || fail(404, 'Ehdokasta ei löydy.');
-  db.nominees = db.nominees.filter((n) => n.id !== nom.id);
-  db.nomVotes = db.nomVotes.filter((v) => v.nomineeId !== nom.id);
-  for (const fv of Object.values(db.finalVotes)) if (fv[nom.categoryId] === nom.id) delete fv[nom.categoryId];
+  removeNominee(nom);
   writeDb();
   return stateFor(user);
 }, { admin: true });
@@ -539,11 +697,21 @@ function applyCategoryEdit(cat, body) {
 }
 
 function applyNomineeEdit(nom, body) {
-  const name = 'name' in body ? clean(body.name, 60) : nom.name;
+  // Henkilön voi vaihtaa korttien henkilöihin; vanhat vapaalla nimellä tehdyt ehdokkaat voi nimetä uudelleen
+  let personId = nom.personId || null; let name = nom.name;
+  if (body.personId) {
+    const person = db.users[body.personId];
+    if (!person || person.root) fail(404, 'Henkilöä ei löydy.');
+    personId = person.id; name = person.name;
+  } else if ('name' in body && !personId) {
+    name = clean(body.name, 60);
+  }
   const reason = 'reason' in body ? clean(body.reason, 160) : nom.reason;
   if (name.length < 2) fail(400, 'Kirjoita ehdokkaan nimi.');
   if (reason.length < 3) fail(400, 'Kirjoita myös mistä ehdotat.');
-  if (db.nominees.some((n) => n.id !== nom.id && n.categoryId === nom.categoryId && norm(n.name) === norm(name) && norm(n.reason) === norm(reason))) fail(409, 'Sama ehdotus on jo listalla.');
+  const same = (n) => (personId ? n.personId === personId : !n.personId && norm(n.name) === norm(name));
+  if (db.nominees.some((n) => n.id !== nom.id && n.categoryId === nom.categoryId && same(n) && norm(n.reason) === norm(reason))) fail(409, 'Sama ehdotus on jo listalla.');
+  nom.personId = personId;
   nom.name = name;
   nom.reason = reason;
 }
@@ -562,7 +730,7 @@ function requirePhase(p) {
 }
 
 // ---------- Staattiset tiedostot ----------
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
 
 function serveStatic(req, res, pathname) {
   const rel = pathname === '/' ? 'index.html' : pathname.slice(1);
@@ -587,6 +755,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'same-origin');
 
+  if (pathname.startsWith('/images/')) return serveImage(req, res, pathname);
   if (!pathname.startsWith('/api/')) return serveStatic(req, res, pathname);
 
   // Yksinkertainen CSRF-suoja: muuttavat pyynnöt vain JSON-muodossa samasta originista
@@ -600,7 +769,7 @@ const server = http.createServer(async (req, res) => {
     const user = currentUser(req);
     if (r.auth !== false && !user) fail(401, 'Kirjaudu ensin sisään.');
     if (r.admin && !user.admin) fail(403, 'Vain adminille.');
-    const body = req.method === 'GET' ? {} : await readBody(req);
+    const body = req.method === 'GET' ? {} : await readBody(req, r.maxBody);
     const params = r.re.exec(pathname).groups || {};
     send(res, 200, await r.handler({ req, res, user, body, params }));
   } catch (e) {

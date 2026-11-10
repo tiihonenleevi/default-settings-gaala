@@ -6,15 +6,17 @@ Kaveriporukan palkintogaalan äänestyssivu. Ei riippuvuuksia: tarvitaan vain No
 
 | Vaihe | Mitä kaverit tekevät | Mitä admin tekee lopuksi |
 | --- | --- | --- |
-| 1. Kategoriaehdotukset | Ehdottavat kategorioita (oletuksena max 3/hlö). Tässä vaiheessa ei äänestetä. | Siirtää vaiheeseen 2. |
-| 2. Kategoria-äänestys | Äänestävät, mitkä kategoriat pääsevät gaalaan (oletuksena 3 ääntä/hlö, max yksi per kategoria). "Vuoden sykähdyttävin hetki" on aina mukana. | Painaa "Valitse N eniten ääniä saanutta" (N = gaalan kategoriat − kiinteät) tai rastii käsin ja siirtää vaiheeseen 3. |
-| 3. Ehdokkaat | Ehdottavat ehdokkaita jatkoon päässeisiin kategorioihin. Ehdotukseen kuuluu aina "Mistä?", joten saman henkilön voi ehdottaa samaan kategoriaan eri aiheista. Ääniä on 2 per kategoria, ja oma ehdotus vie automaattisesti yhden äänen. Äänen voi siirtää myöhemmin. | Rastii finalistit jokaiseen kategoriaan ja siirtää vaiheeseen 4. |
-| 4. Finaali | Antavat yhden äänen per kategoria. | Siirtää vaiheeseen 5 (suljettu). |
+| 1. Kategoriaehdotukset | Ehdottavat kategorioita (oletuksena max 3/hlö). Omaa ehdotusta voi muokata ja poistaa ennen lukitusta. Tässä vaiheessa ei äänestetä. | Siirtää vaiheeseen 2. |
+| 2. Kategoria-äänestys | Äänestävät, mitkä kategoriat pääsevät gaalaan (oletuksena 3 ääntä/hlö, max yksi per kategoria). "Vuoden sykähdyttävin hetki" on aina mukana. Lukitseminen vaatii vähintään yhden äänen. | Painaa "Valitse N eniten ääniä saanutta" (N = gaalan kategoriat − kiinteät) tai rastii käsin ja siirtää vaiheeseen 3. |
+| 3. Ehdokkaat | Ehdottavat ehdokkaita valitsemalla henkilökortin (osallistujat kuvineen) ja kirjoittamalla "Mistä?" – saman henkilön voi ehdottaa samaan kategoriaan eri aiheista (oletuksena max 2 ehdotusta/kategoria). Ehdottaminen ei anna ääntä. Ääniä on 2 per kategoria, ja lukitseminen vaatii, että kaikki äänet on käytetty. | Painaa "Valitse 3 eniten ääniä saanutta jokaiseen" tai rastii finalistit käsin ja siirtää vaiheeseen 4. |
+| 4. Finaali | Valitsevat pystykorteista yhden voittajan per kategoria. Lukitseminen vaatii vähintään yhden äänen. | Siirtää vaiheeseen 5 (suljettu). |
 | 5. Suljettu | Näkevät viestin, että äänestys on päättynyt ja voittajat julkistetaan gaalassa. | Näkee hallinnassa tulokset (voittajat ja finaalin äänimäärät) ja voi kopioida ne tekstinä gaalan diaesitystä varten. |
 
 Vaiheiden 1–4 lopussa on **Lukko sisään** -nappi. Kun osallistuja lukitsee vastauksensa, hän ei voi enää muuttaa sen vaiheen ehdotuksia tai ääniä, ja hänelle näytetään odotusnäyttö ("Seuraava vaihe ei ole vielä alkanut"), kunnes admin avaa seuraavan vaiheen. Lukitseminen on vahvistus, ei pakollinen: lukitsemattomatkin äänet lasketaan. Admin näkee osallistujataulukosta, ketkä ovat lukinneet, ja voi avata lukon ("Avaa lukko"), jos joku lukitsi vahingossa.
 
-- Äänet ja ehdottajat ovat anonyymejä. Kukaan ei näe, kuka ehdotti mitä tai kuka äänesti ketä.
+- Äänet ovat anonyymejä. Ehdottajat näkyvät vain adminille (hallinnan taulukoissa), muut osallistujat eivät näe kuka ehdotti mitä.
+- Admin näkee osallistujataulukosta, montako ehdotusta tai ääntä kukin on käyttänyt tässä vaiheessa.
+- Kuvat: admin lisää osallistujille kuvat osallistujataulukosta. Kuva näkyy henkilökorteissa ja ehdokaskorteissa. Yksittäiselle ehdokaskortille voi vaihtaa oman kuvan ehdokastaulukosta (esim. eri kuva eri kategoriassa). Selain pienentää kuvan ennen lähetystä, ja kuvat näkyvät vain kirjautuneille. Kuvat tallentuvat `data/images`-kansioon.
 - Äänimäärät näkee vain admin. Finaalin äänet ovat oletuksena piilossa myös adminilta, jotta voittajat ovat yllätys myös teille. Ne saa näkyviin valinnalla "Näytä finaalin äänet".
 - Hallinnan asetuksista voi muuttaa gaalan kategoriamäärän, kategoria-äänestyksen äänet, ehdokasvaiheen äänet, ehdotusrajat ja näkyvän takarajan.
 - Vanhan 4-vaiheisen version tietokanta muunnetaan automaattisesti uusiin vaihenumeroihin palvelimen käynnistyessä.
@@ -89,7 +91,7 @@ Jos kaverit näkevät tailnetissä muitakin koneita, rajatkaa pääsy ACL:llä p
 
 ## Varmuuskopio ja nollaus
 
-- Kaikki data on tiedostossa `data/db.json`. Varmuuskopioksi riittää tämän tiedoston kopioiminen.
+- Kaikki data on tiedostossa `data/db.json` ja kuvat kansiossa `data/images`. Varmuuskopioksi riittää `data`-kansion kopioiminen.
 - Jos haluatte aloittaa alusta, pysäyttäkää palvelin ja poistakaa `data/db.json`.
 - Kadonneen koodin näkee hallinnan osallistujataulukosta.
 

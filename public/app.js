@@ -6,6 +6,8 @@ let showFinalCounts = false;
 // Muokattavana oleva kohde: { kind: 'cat' | 'nom', id, admin } tai null.
 // Säilyy uudelleenpiirroissa (myös 15 s automaattipäivityksessä), joten keskeneräinen muokkaus ei katoa.
 let editing = null;
+// Ehdokasvaiheessa valittu henkilökortti: { catId, personId } tai null (perusteen kirjoittaminen kesken)
+let proposing = null;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -125,7 +127,7 @@ function phaseHero() {
     return `<div class="hero-head">
       <p class="eyebrow">Vaihe 1 / 4 · Kategoriaehdotukset</p>
       <h1 class="h1">Mistä palkintoja jaetaan?</h1>
-      <p class="lead">Ehdota kategorioita, joista gaalassa voisi jakaa palkinnon. Voit ehdottaa enintään ${L.maxCategoryProposals} kategoriaa. Seuraavassa vaiheessa kaikki äänestävät, mitkä kategoriat pääsevät gaalaan.</p>
+      <p class="lead">Ehdota kategorioita, joista gaalassa voisi jakaa palkinnon. Voit ehdottaa enintään ${L.maxCategoryProposals} kategoriaa. Ehdotukset eivät ole ääniä: seuraavassa vaiheessa kaikki äänestävät, mitkä kategoriat pääsevät gaalaan.</p>
     </div>
     <div class="meta-row"><span class="meter">${pips(s.used.catProposals, L.maxCategoryProposals)} Ehdotuksia käytetty ${s.used.catProposals} / ${L.maxCategoryProposals}</span>${deadline()}</div>`;
   }
@@ -134,6 +136,7 @@ function phaseHero() {
       <p class="eyebrow">Vaihe 2 / 4 · Kategoria-äänestys</p>
       <h1 class="h1">Mitkä kategoriat gaalaan?</h1>
       <p class="lead">Gaalassa jaetaan ${L.targetCategories} palkintoa. ”Vuoden sykähdyttävin hetki” on mukana joka tapauksessa, ja loput ${L.advanceCount} valitaan äänestämällä. Sinulla on ${L.catVotes} ääntä, enintään yksi per kategoria.</p>
+      <p class="notice"><b>Äänestä vähintään yhtä kategoriaa</b> ennen kuin lukitset vastauksesi.</p>
     </div>
     <div class="meta-row"><span class="meter">${pips(s.used.catVotes, L.catVotes)} Ääniä käytetty ${s.used.catVotes} / ${L.catVotes}</span>${deadline()}</div>`;
   }
@@ -141,7 +144,8 @@ function phaseHero() {
     return `<div class="hero-head">
       <p class="eyebrow">Vaihe 3 / 4 · Ehdokkaat</p>
       <h1 class="h1">Keitä palkitaan?</h1>
-      <p class="lead">Kategoriat on valittu. Sinulla on ${L.votesP2} ääntä jokaisessa kategoriassa. Kun ehdotat jotakuta, yksi äänesi menee ehdotukselle automaattisesti – voit siirtää sen myöhemmin. Saman henkilön voi ehdottaa useammasta eri aiheesta.</p>
+      <p class="lead">Kategoriat on valittu. Ehdota henkilöitä valitsemalla kortti ja kirjoittamalla mistä (enintään ${L.maxNomineeProposals} per kategoria). Saman henkilön voi ehdottaa useammasta eri aiheesta.</p>
+      <p class="notice"><b>Muista myös äänestää.</b> Ehdottaminen ei anna ääntä. Sinulla on ${L.votesP2} ääntä jokaisessa kategoriassa, ja ne kaikki pitää käyttää ennen lukitsemista.</p>
     </div>
     <div class="meta-row">${deadline()}</div>`;
   }
@@ -150,11 +154,11 @@ function phaseHero() {
     return `<div class="hero-head">
       <p class="eyebrow">Vaihe 4 / 4 · Finaali</p>
       <h1 class="h1">Valitse voittajat</h1>
-      <p class="lead">Yksi ääni per kategoria. Voit vaihtaa valintaasi, kunnes lukitset vastauksesi.</p>
+      <p class="lead">Valitse kortti jokaisesta kategoriasta – yksi ääni per kategoria. Voit vaihtaa valintaasi, kunnes lukitset vastauksesi. Lukitseminen vaatii vähintään yhden äänen.</p>
     </div>
     <div class="meta-row"><span class="meter">${pips(done, cats.length)} Äänestetty ${done} / ${cats.length} kategoriaa</span>${deadline()}</div>`;
   }
-  return `<div class="hero-head">
+  return `<div class="hero-head screen-center">
     <p class="eyebrow">Äänestys päättyi</p>
     <h1 class="display">Äänestys on suljettu</h1>
     <p class="lead">Kiitos äänistä! Voittajat julkistetaan gaalassa.</p>
@@ -184,7 +188,8 @@ function lockBar() {
       <p class="eyebrow">Valmista?</p>
       <h2 class="h2">Lukitse vastauksesi</h2>
       <p class="muted" style="margin:0;max-width:52ch">Kun olet tyytyväinen valintoihisi, lukitse ne. Lukituksen jälkeen et voi enää muuttaa tämän vaiheen ${what}.</p>
-      <button class="btn btn--primary" data-act="lock">Lukko sisään</button>
+      <button class="btn btn--primary" data-act="lock" ${state.lockReady.ok ? '' : 'disabled'}>Lukko sisään</button>
+      ${state.lockReady.ok ? '' : `<p class="small lock-need" style="margin:0;max-width:52ch">${esc(state.lockReady.reason)}</p>`}
     </div>
   </section>`;
 }
@@ -199,10 +204,7 @@ function lockWarning() {
     const left = L.catVotes - s.used.catVotes;
     return left > 0 ? `Sinulla on vielä ${left} ääntä käyttämättä.\n\n` : '';
   }
-  if (s.phase === 3) {
-    const left = s.categories.reduce((sum, c) => sum + Math.max(0, L.votesP2 - s.nominees.filter((n) => n.categoryId === c.id && n.myVote).length), 0);
-    return left > 0 ? `Sinulla on vielä ${left} ääntä käyttämättä.\n\n` : '';
-  }
+  if (s.phase === 3) return '';
   if (s.phase === 4) {
     const left = s.categories.filter((c) => !s.nominees.some((n) => n.categoryId === c.id && n.myFinal)).length;
     return left > 0 ? `${left} kategoriaa on vielä äänestämättä.\n\n` : '';
@@ -229,7 +231,7 @@ function waitingView() {
   }
   const last = s.phase === 4;
   return `
-  <section class="section">
+  <section class="section screen-center">
     <div class="panel lock-panel is-locked">
       <img class="lock-trophy" src="/logo.svg" alt="" width="108" height="236">
       <p class="eyebrow">Lukko sisään · vaihe ${s.phase} / 4</p>
@@ -265,7 +267,7 @@ function phaseProposals() {
           <div class="title">${esc(c.name)} ${c.fixed ? '<span class="tag tag--gold">Mukana aina</span>' : ''} ${c.mine ? '<span class="tag">Sinun ehdotuksesi</span>' : ''}</div>
           ${c.description ? `<p>${esc(c.description)}</p>` : ''}
         </div>
-        ${c.mine ? editButton('cat', c.id, false) : ''}
+        ${c.mine ? `<div class="item-actions">${editButton('cat', c.id, false)}${deleteButton('cat', c.id)}</div>` : ''}
       </div>`).join('')}
       ${cats.length <= 1 ? '<div class="empty">Ei vielä muita ehdotuksia. Ehdota ensimmäinen kategoria yllä.</div>' : ''}
     </div>
@@ -300,12 +302,23 @@ function editButton(kind, id, admin, label = 'Muokkaa') {
   return `<button class="btn btn--ghost" type="button" data-act="edit" data-kind="${kind}" data-id="${id}" data-admin="${admin ? 1 : ''}">${label}</button>`;
 }
 
+function deleteButton(kind, id) {
+  return `<button class="btn btn--ghost" type="button" data-act="del-own" data-kind="${kind}" data-id="${id}">Poista</button>`;
+}
+
+// Henkilövalinta ehdokkaan muokkaukseen. Vanhalle vapaalla nimellä tehdylle ehdokkaalle jätetään nimikenttä.
+function personField(k, item) {
+  const ppl = state.people || [];
+  if (!item.personId) return `<div class="field"><label for="e1-${k}">Ehdokas</label><input class="input" id="e1-${k}" data-keep maxlength="60" required value="${esc(item.name)}"></div>`;
+  return `<div class="field"><label for="e1-${k}">Ehdokas</label><select class="input" id="e1-${k}" data-keep>${ppl.map((p) => `<option value="${p.id}" ${p.id === item.personId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>`;
+}
+
 function editForm(kind, item, admin) {
   const cat = kind === 'cat';
   const k = `${kind}-${item.id}`;
   return `
-  <form class="edit-form" data-form="edit" data-kind="${kind}" data-id="${item.id}" data-admin="${admin ? 1 : ''}">
-    <div class="field"><label for="e1-${k}">${cat ? 'Kategorian nimi' : 'Ehdokas'}</label><input class="input" id="e1-${k}" data-keep maxlength="60" required value="${esc(item.name)}"></div>
+  <form class="edit-form" data-form="edit" data-kind="${kind}" data-id="${item.id}" data-admin="${admin ? 1 : ''}" data-person="${item.personId ? 1 : ''}">
+    ${cat ? `<div class="field"><label for="e1-${k}">Kategorian nimi</label><input class="input" id="e1-${k}" data-keep maxlength="60" required value="${esc(item.name)}"></div>` : personField(k, item)}
     <div class="field"><label for="e2-${k}">${cat ? 'Kuvaus (valinnainen)' : 'Mistä?'}</label><input class="input" id="e2-${k}" data-keep maxlength="160" ${cat ? '' : 'required'} value="${esc(cat ? item.description : item.reason)}"></div>
     <div class="edit-actions"><button class="btn btn--primary btn--sm" type="submit">Tallenna</button><button class="btn btn--ghost" type="button" data-act="edit-cancel">Peruuta</button></div>
   </form>`;
@@ -316,13 +329,25 @@ function initial(name) {
   return ch.toLocaleUpperCase('fi');
 }
 
+// Kuva, jos sellainen on; muuten kultainen nimikirjainmitali
+function portrait(item, cls = 'nom-mono') {
+  // Jos kuva ei lataudu, näytetään nimikirjain sen tilalla
+  const fallback = `<span>${esc(initial(item.name))}</span>`;
+  return `<div class="${cls}${item.photo ? ' has-photo' : ''}" aria-hidden="true">${item.photo ? `<img src="${item.photo}" alt="" loading="lazy" onerror="this.parentNode.classList.remove('has-photo');this.outerHTML=${esc(JSON.stringify(fallback))}">` : fallback}</div>`;
+}
+
+// Vaihe 3: ehdokkaat. Ehdotetaan valitsemalla henkilökortti ja kirjoittamalla peruste; äänestetään erikseen.
 function phaseNominees() {
   const s = state; const L = s.limits;
   return s.categories.map((c, idx) => {
     const noms = s.nominees.filter((n) => n.categoryId === c.id)
       .sort((a, b) => a.name.localeCompare(b.name, 'fi') || a.reason.localeCompare(b.reason, 'fi'));
     const used = noms.filter((n) => n.myVote).length;
+    const need = Math.min(L.votesP2, noms.length);
     const full = used >= L.votesP2;
+    const myProps = noms.filter((n) => n.mine).length;
+    const propsLeft = L.maxNomineeProposals - myProps;
+    const picked = proposing && proposing.catId === c.id ? (s.people || []).find((p) => p.id === proposing.personId) : null;
     return `
     <section class="section" id="cat-${c.id}">
       <header class="cat-head">
@@ -330,31 +355,39 @@ function phaseNominees() {
         <div class="row"><h2 class="h2">${esc(c.name)}</h2><span class="meter small">${pips(used, L.votesP2)} Ääniä käytetty ${used} / ${L.votesP2}</span></div>
         ${c.description ? `<p class="muted" style="margin:0">${esc(c.description)}</p>` : ''}
       </header>
-      ${noms.length ? `<div class="nom-grid">
+      ${noms.length ? `
+      ${used < need ? `<p class="notice small">Äänestä vielä ${need - used} ehdokasta tässä kategoriassa.</p>` : ''}
+      <div class="nom-grid">
         ${noms.map((n) => `
         <article class="nom-card ${n.myVote ? 'is-voted' : ''}">
-          <div class="nom-mono" aria-hidden="true"><span>${esc(initial(n.name))}</span>${n.mine ? '<span class="tag nom-tag">Sinun ehdotuksesi</span>' : ''}</div>
+          <div class="nom-media">${portrait(n)}${n.mine ? '<span class="tag nom-tag">Sinun ehdotuksesi</span>' : ''}</div>
           ${isEditing('nom', n.id, false) ? `<div class="nom-body">${editForm('nom', n, false)}</div>` : `<div class="nom-body">
             <h3 class="h3">${esc(n.name)}</h3>
             <p>${esc(n.reason)}</p>
-            ${n.mine ? `<div>${editButton('nom', n.id, false)}</div>` : ''}
+            ${n.mine ? `<div class="item-actions">${editButton('nom', n.id, false)}${deleteButton('nom', n.id)}</div>` : ''}
           </div>
           <button class="btn btn--sm ${n.myVote ? 'btn--voted' : 'btn--secondary'}" data-act="vote-nom" data-id="${n.id}" aria-pressed="${n.myVote}" ${!n.myVote && full ? 'disabled title="Kategorian äänet käytetty"' : ''}>${n.myVote ? 'Äänestetty' : 'Äänestä'}</button>`}
         </article>`).join('')}
       </div>` : '<div class="empty">Ei vielä ehdokkaita. Ehdota ensimmäinen alla.</div>'}
-      <form class="panel" data-form="nom" data-cat="${c.id}">
-        <p class="eyebrow">Uusi ehdotus</p>
-        <div class="form-row">
-          <div class="field"><label for="nn-${c.id}">Ehdokas</label><input class="input" id="nn-${c.id}" data-keep maxlength="60" required placeholder="Kuka?" ${full ? 'disabled' : ''}></div>
-          <div class="field"><label for="nr-${c.id}">Mistä?</label><input class="input" id="nr-${c.id}" data-keep maxlength="160" required minlength="3" placeholder="Mikä hetki tai teko?" ${full ? 'disabled' : ''}></div>
-          <button class="btn btn--primary" type="submit" ${full ? 'disabled' : ''}>Ehdota</button>
+      <div class="panel propose-panel">
+        <div class="cat-head" style="border:0;padding:0"><p class="eyebrow">Ehdota ehdokasta</p><p class="small muted" style="margin:0">${propsLeft > 0 ? `Valitse henkilö ja kirjoita mistä. Ehdotuksia jäljellä ${propsLeft} / ${L.maxNomineeProposals}. Ehdottaminen ei anna ääntä.` : `Olet käyttänyt kaikki ${L.maxNomineeProposals} ehdotustasi tässä kategoriassa. Voit poistaa oman ehdotuksesi, jos haluat ehdottaa jotain muuta.`}</p></div>
+        <div class="person-grid" role="list">
+          ${(s.people || []).map((p) => `
+          <button type="button" class="person-card ${picked && picked.id === p.id ? 'is-picked' : ''}" role="listitem" data-act="pick-person" data-cat="${c.id}" data-person="${p.id}" ${propsLeft > 0 ? '' : 'disabled'} aria-pressed="${!!(picked && picked.id === p.id)}">
+            ${portrait(p, 'person-photo')}<span class="person-name">${esc(p.name)}</span>
+          </button>`).join('')}
         </div>
-        <p class="small muted" style="margin:0">${full ? 'Kaikki äänesi tässä kategoriassa on käytetty. Poista ääni joltain ehdokkaalta, niin voit ehdottaa uutta.' : 'Ehdotus vie yhden äänesi tässä kategoriassa.'}</p>
-      </form>
+        ${picked ? `
+        <form class="propose-form" data-form="nom" data-cat="${c.id}" data-person="${picked.id}">
+          <div class="field"><label for="pr-${c.id}">Mistä ehdotat: ${esc(picked.name)}?</label><input class="input" id="pr-${c.id}" data-keep maxlength="160" required minlength="3" placeholder="Mikä hetki tai teko?"></div>
+          <div class="edit-actions"><button class="btn btn--primary btn--sm" type="submit">Ehdota</button><button class="btn btn--ghost" type="button" data-act="pick-cancel">Peruuta</button></div>
+        </form>` : ''}
+      </div>
     </section>`;
   }).join('');
 }
 
+// Vaihe 4: finaali pystykortteina. Koko kortti on valintanappi (radio), joten valinta toimii myös näppäimistöllä.
 function phaseFinal() {
   const s = state;
   return s.categories.map((c, idx) => {
@@ -366,10 +399,14 @@ function phaseFinal() {
         <h2 class="h2">${esc(c.name)}</h2>
         ${c.description ? `<p class="muted" style="margin:0">${esc(c.description)}</p>` : ''}
       </header>
-      <div class="list" role="radiogroup" aria-label="${esc(c.name)}">
+      <div class="final-grid" role="radiogroup" aria-label="${esc(c.name)}">
         ${noms.map((n) => `
-        <label class="vote"><input type="radio" name="f-${c.id}" value="${n.id}" data-act="final" ${n.myFinal ? 'checked' : ''}>
-          <span class="txt"><b>${esc(n.name)}</b>${n.reason ? `<span>${esc(n.reason)}</span>` : ''}</span></label>`).join('')}
+        <label class="final-card ${n.myFinal ? 'is-voted' : ''}">
+          <input type="radio" name="f-${c.id}" value="${n.id}" data-act="final" ${n.myFinal ? 'checked' : ''}>
+          ${portrait(n, 'final-photo')}
+          <span class="final-body"><b>${esc(n.name)}</b>${n.reason ? `<span>${esc(n.reason)}</span>` : ''}</span>
+          <span class="final-pick">${n.myFinal ? '✓ Sinun valintasi' : 'Valitse'}</span>
+        </label>`).join('')}
       </div>
     </section>`;
   }).join('');
@@ -411,6 +448,7 @@ function adminView() {
         <div class="field"><label for="s-v2">Ääniä / kategoria ehdokasvaiheessa</label><input class="input" id="s-v2" type="number" min="1" max="50" value="${L.votesP2}"></div>
         <div class="field"><label for="s-mc">Kategoriaehdotuksia / hlö</label><input class="input" id="s-mc" type="number" min="1" max="50" value="${L.maxCategoryProposals}"></div>
         <div class="field"><label for="s-mn">Ehdokasehdotuksia / hlö / kategoria</label><input class="input" id="s-mn" type="number" min="1" max="50" value="${L.maxNomineeProposals}"></div>
+        <div class="field"><label for="s-fi">Finalisteja / kategoria (automaattivalinta)</label><input class="input" id="s-fi" type="number" min="1" max="50" value="${L.finalists}"></div>
       </div>
       <div><button class="btn btn--secondary btn--sm" type="submit">Tallenna asetukset</button></div>
     </form>
@@ -425,7 +463,7 @@ function adminView() {
         <tbody>${[...a.categories].sort((x, y) => (y.fixed - x.fixed) || (y.votes - x.votes)).map((c) => `
           <tr>
             <td><label class="check"><input type="checkbox" data-act="advance" data-id="${c.id}" ${c.advanced ? 'checked' : ''} ${c.fixed ? 'disabled' : ''}><span class="small muted">${c.fixed ? 'aina' : ''}</span></label></td>
-            <td>${isEditing('cat', c.id, true) ? editForm('cat', c, true) : `<b style="font-weight:500">${esc(c.name)}</b>${c.description ? `<div class="small muted">${esc(c.description)}</div>` : ''}`}</td>
+            <td>${isEditing('cat', c.id, true) ? editForm('cat', c, true) : `<b style="font-weight:500">${esc(c.name)}</b>${c.description ? `<div class="small muted">${esc(c.description)}</div>` : ''}<div class="by">${c.fixed ? 'Kiinteä' : `Ehdottaja: ${esc(c.byName || 'poistettu osallistuja')}`}</div>`}</td>
             <td style="width:30%">${c.fixed ? '<span class="small muted">kiinteä</span>' : `<div class="bar"><i style="width:${(c.votes / maxCat) * 100}%"></i></div>`}</td>
             <td class="num">${c.fixed ? '' : c.votes}</td>
             <td class="act">${isEditing('cat', c.id, true) ? '' : editButton('cat', c.id, true)}${c.fixed || isEditing('cat', c.id, true) ? '' : `<button class="btn btn--ghost" data-act="del-cat" data-id="${c.id}" aria-label="Poista ${esc(c.name)}">Poista</button>`}</td>
@@ -437,6 +475,7 @@ function adminView() {
     <div style="display:grid;gap:12px">
       <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
         <p class="eyebrow">Ehdokkaat · valitse finalistit</p>
+        <button class="btn btn--secondary btn--sm" data-act="auto-finalists">Valitse ${L.finalists} eniten ääniä saanutta jokaiseen</button>
         ${s.phase >= 4 ? `<label class="check small"><input type="checkbox" data-act="toggle-final-counts" ${showFinalCounts ? 'checked' : ''}> Näytä finaalin äänet (spoileri)</label>` : ''}
       </div>
       ${advanced.map((c) => {
@@ -448,7 +487,8 @@ function adminView() {
           <tbody>${noms.map((n) => `
             <tr>
               <td style="width:1%"><input type="checkbox" class="check" style="width:18px;height:18px;accent-color:var(--gold)" data-act="finalist" data-id="${n.id}" ${n.finalist ? 'checked' : ''} aria-label="Finalisti: ${esc(n.name)}"></td>
-              <td>${isEditing('nom', n.id, true) ? editForm('nom', n, true) : `<b style="font-weight:500">${esc(n.name)}</b>${n.reason ? `<div class="small muted">${esc(n.reason)}</div>` : ''}`}</td>
+              <td>${isEditing('nom', n.id, true) ? editForm('nom', n, true) : `<div class="adm-entry">${portrait(n, 'thumb')}<div><b style="font-weight:500">${esc(n.name)}</b>${n.reason ? `<div class="small muted">${esc(n.reason)}</div>` : ''}<div class="by">Ehdottaja: ${esc(n.byName || 'poistettu osallistuja')}</div>
+                <div class="photo-actions">${photoButton('nom', n.id, n.ownPhoto ? 'Vaihda kortin kuva' : 'Kortin oma kuva')}${n.ownPhoto ? `<button class="btn btn--ghost" data-act="photo-del" data-target="nom" data-id="${n.id}">Poista kortin kuva</button>` : ''}</div></div></div>`}</td>
               <td style="width:25%"><div class="bar"><i style="width:${(n.votes / max) * 100}%"></i></div></td>
               <td class="num">${n.votes}</td>
               ${s.phase >= 4 && showFinalCounts ? `<td class="num" style="color:var(--gold-text)">${n.finalist ? n.finalVotes + ' fin.' : ''}</td>` : ''}
@@ -464,11 +504,13 @@ function adminView() {
 
 function participantsView() {
   const a = state.admin; const ph = state.phase;
+  const L = state.limits;
+  // Käytetyt ehdotukset tai äänet tässä vaiheessa
   const status = (p) => {
-    if (ph === 1) return p.p1 ? `${p.p1} ehdotusta` : '–';
-    if (ph === 2) return p.p2 ? 'Äänestänyt' : '–';
-    if (ph === 3) return p.p3 ? 'Äänestänyt' : '–';
-    return `${p.p4} / ${state.categories.length}`;
+    if (ph === 1) return `${p.p1} / ${L.maxCategoryProposals} ehdotusta`;
+    if (ph === 2) return `${p.p2} / ${L.catVotes} ääntä`;
+    if (ph === 3) return `${p.p3} / ${a.nomVoteNeed} ääntä`;
+    return `${p.p4} / ${state.categories.length} ääntä`;
   };
   return `
   <div style="display:grid;gap:12px">
@@ -479,12 +521,13 @@ function participantsView() {
       <div><button class="btn btn--secondary btn--sm" type="submit">Luo koodit</button></div>
     </form>
     ${a.participants.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>Nimi</th><th>Koodi</th><th>${ph >= 4 ? 'Finaali' : 'Vaihe ' + ph}</th><th>Admin</th><th></th></tr></thead>
+      <thead><tr><th>Nimi</th><th>Koodi</th><th>${ph >= 4 ? 'Finaali' : 'Vaihe ' + ph} · käytetty</th><th>Admin</th><th></th></tr></thead>
       <tbody>${a.participants.map((p) => `
         <tr>
-          <td><b style="font-weight:500">${esc(p.name)}</b>${p.joined ? '' : '<div class="small muted">Ei vielä kirjautunut</div>'}</td>
+          <td><div class="adm-entry">${portrait(p, 'thumb')}<div><b style="font-weight:500">${esc(p.name)}</b>${p.joined ? '' : '<div class="small muted">Ei vielä kirjautunut</div>'}
+            <div class="photo-actions">${photoButton('user', p.id, p.photo ? 'Vaihda kuva' : 'Lisää kuva')}${p.photo ? `<button class="btn btn--ghost" data-act="photo-del" data-target="user" data-id="${p.id}">Poista kuva</button>` : ''}</div></div></div></td>
           <td><code class="code">${esc(p.code)}</code></td>
-          <td class="small">${p.locked && ph <= 4 ? '<span class="tag tag--gold">Lukittu</span>' : status(p)}</td>
+          <td class="small">${ph <= 4 ? status(p) : '–'}${p.locked && ph <= 4 ? ' <span class="tag tag--gold">Lukittu</span>' : ''}</td>
           <td><input type="checkbox" style="width:18px;height:18px;accent-color:var(--gold)" data-act="user-admin" data-id="${p.id}" ${p.admin ? 'checked' : ''} aria-label="Admin: ${esc(p.name)}"></td>
           <td class="act">
             ${p.locked && ph <= 4 ? `<button class="btn btn--ghost" data-act="user-unlock" data-id="${p.id}" data-name="${esc(p.name)}">Avaa lukko</button>` : ''}
@@ -494,8 +537,13 @@ function participantsView() {
           </td>
         </tr>`).join('')}</tbody>
     </table></div>
-    <p class="small muted" style="margin:0">Linkki kirjaa kaverin sisään suoraan. "Uusi koodi" mitätöi vanhan koodin ja kirjaa kaverin ulos kaikilta laitteilta.</p>` : '<div class="empty">Ei vielä osallistujia. Lisää kaverien nimet yllä, niin jokainen saa oman koodin.</div>'}
+    <p class="small muted" style="margin:0">Linkki kirjaa kaverin sisään suoraan. "Uusi koodi" mitätöi vanhan koodin ja kirjaa kaverin ulos kaikilta laitteilta. Osallistujan kuva näkyy hänen henkilö- ja ehdokaskorteissaan; yksittäiselle ehdokaskortille voi vaihtaa oman kuvan ehdokastaulukosta.</p>` : '<div class="empty">Ei vielä osallistujia. Lisää kaverien nimet yllä, niin jokainen saa oman koodin.</div>'}
   </div>`;
+}
+
+// Kuvan valinta: tiedostokenttä napin sisällä; muutos käsitellään change-tapahtumassa
+function photoButton(target, id, label) {
+  return `<label class="btn btn--ghost file-btn">${label}<input type="file" accept="image/*" data-act="photo-upload" data-target="${target}" data-id="${id}"></label>`;
 }
 
 function results() {
@@ -562,6 +610,26 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'edit-cancel': editing = null; render(); break;
+    case 'del-own': {
+      const cat = t.dataset.kind === 'cat';
+      if (!confirm(cat ? 'Poistetaanko ehdottamasi kategoria?' : 'Poistetaanko ehdotuksesi? Myös muiden sille antamat äänet poistuvat.')) break;
+      await api('DELETE', `/api/${cat ? 'categories' : 'nominees'}/${id}`, {}).then(() => toast('Ehdotus poistettu.')).catch(() => {});
+      break;
+    }
+    case 'pick-person': {
+      proposing = { catId: t.dataset.cat, personId: t.dataset.person };
+      render();
+      const inp = document.getElementById('pr-' + t.dataset.cat);
+      if (inp) inp.focus();
+      break;
+    }
+    case 'pick-cancel': proposing = null; render(); break;
+    case 'auto-finalists':
+      if (confirm(`Valitaanko jokaiseen kategoriaan ${state.limits.finalists} eniten ääniä saanutta finalistiksi? Nykyiset finalistivalinnat korvataan.`)) await api('POST', '/api/admin/nominees/auto-finalists', {}).catch(() => {});
+      break;
+    case 'photo-del':
+      if (confirm('Poistetaanko kuva?')) await api('DELETE', `/api/admin/${t.dataset.target === 'user' ? 'users' : 'nominees'}/${id}/photo`, {}).catch(() => {});
+      break;
     case 'auto-advance': await api('POST', '/api/admin/categories/auto-advance', {}).catch(() => {}); break;
     case 'user-regen': if (confirm('Luodaanko uusi koodi? Vanha lakkaa toimimasta heti.')) await api('POST', `/api/admin/users/${id}`, { regenerate: true }).catch(() => {}); break;
     case 'user-del': if (confirm('Poistetaanko osallistuja ja hänen äänensä? Hänen ehdotuksensa jäävät.')) await api('DELETE', `/api/admin/users/${id}`, {}).catch(() => {}); break;
@@ -590,8 +658,39 @@ document.addEventListener('change', async (e) => {
     case 'advance': await api('POST', `/api/admin/categories/${t.dataset.id}`, { advanced: t.checked }).catch(() => {}); break;
     case 'finalist': await api('POST', `/api/admin/nominees/${t.dataset.id}`, { finalist: t.checked }).catch(() => {}); break;
     case 'toggle-final-counts': showFinalCounts = t.checked; render(); break;
+    case 'photo-upload': {
+      const file = t.files && t.files[0];
+      if (!file) break;
+      try {
+        toast('Ladataan kuvaa…');
+        const image = await imageToDataUrl(file);
+        await api('POST', `/api/admin/${t.dataset.target === 'user' ? 'users' : 'nominees'}/${t.dataset.id}/photo`, { image });
+      } catch (err) { if (err && err.message) toast(err.message, true); }
+      break;
+    }
   }
 });
+
+// Pienennä kuva selaimessa ennen lähetystä: pidempi sivu max 800 px, JPEG-laatu 0,85 (yleensä 60–200 kt)
+async function imageToDataUrl(file, max = 800) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('Kuvaa ei voitu lukea. Kokeile JPEG- tai PNG-kuvaa.'));
+      i.src = url;
+    });
+    const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.85);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
 document.addEventListener('submit', async (e) => {
   const f = e.target;
@@ -611,24 +710,21 @@ document.addEventListener('submit', async (e) => {
       clear('c-name', 'c-desc');
       toast('Kategoria ehdotettu.');
     } else if (f.dataset.form === 'nom') {
-      const cid = f.dataset.cat;
-      // tyhjennä ennen renderöintiä, ettei render palauta tekstiä
-      const name = v('nn-' + cid), reason = v('nr-' + cid);
-      clear('nn-' + cid, 'nr-' + cid);
-      await api('POST', '/api/nominees', { categoryId: cid, name, reason }).catch((err) => {
-        const n = document.getElementById('nn-' + cid), r = document.getElementById('nr-' + cid);
-        if (n) n.value = name; if (r) r.value = reason; throw err;
-      });
-      toast('Ehdokas lisätty.');
+      const cid = f.dataset.cat; const reason = v('pr-' + cid);
+      await api('POST', '/api/nominees', { categoryId: cid, personId: f.dataset.person, reason });
+      clear('pr-' + cid);
+      proposing = null; render();
+      toast('Ehdokas lisätty. Muista myös äänestää.');
     } else if (f.dataset.form === 'edit') {
       const { kind, id } = f.dataset; const admin = !!f.dataset.admin; const k = `${kind}-${id}`;
-      const body = kind === 'cat' ? { name: v('e1-' + k), description: v('e2-' + k) } : { name: v('e1-' + k), reason: v('e2-' + k) };
+      const body = kind === 'cat' ? { name: v('e1-' + k), description: v('e2-' + k) }
+        : f.dataset.person ? { personId: v('e1-' + k), reason: v('e2-' + k) } : { name: v('e1-' + k), reason: v('e2-' + k) };
       const base = kind === 'cat' ? 'categories' : 'nominees';
       await api('POST', admin ? `/api/admin/${base}/${id}` : `/api/${base}/${id}/edit`, body);
       editing = null; render();
       toast('Muutokset tallennettu.');
     } else if (f.id === 'settings-form') {
-      await api('POST', '/api/admin/settings', { deadline: v('s-deadline'), targetCategories: v('s-tc'), catVotes: v('s-cv'), votesP2: v('s-v2'), maxCategoryProposals: v('s-mc'), maxNomineeProposals: v('s-mn') });
+      await api('POST', '/api/admin/settings', { deadline: v('s-deadline'), targetCategories: v('s-tc'), catVotes: v('s-cv'), votesP2: v('s-v2'), maxCategoryProposals: v('s-mc'), maxNomineeProposals: v('s-mn'), finalists: v('s-fi') });
       toast('Asetukset tallennettu.');
     }
   } catch { /* virhe näytetty toastina */ }
