@@ -544,13 +544,31 @@ route('POST', '/api/feedback', ({ user, body }) => {
   return { ...stateFor(user), notice: 'Palaute lähetetty.' };
 });
 
+// Lähetettyä palautetta ei voi poistaa itse; vain admin voi poistaa (palautelokista)
 route('DELETE', '/api/feedback/:id', ({ user, params }) => {
   const f = (db.feedback || []).find((x) => x.id === params.id) || fail(404, 'Palautetta ei löydy.');
-  if (f.userId !== user.id && !user.admin) fail(403, 'Voit poistaa vain oman palautteesi.');
   db.feedback = db.feedback.filter((x) => x.id !== f.id);
   writeDb();
   return stateFor(user);
-});
+}, { admin: true });
+
+// Koko gaalan nollaus. Vaatii vahvistussanan, ja nykyinen tietokanta tallennetaan ensin varmuuskopioksi
+// data-kansioon. Kuvatiedostoja ei poisteta, jotta varmuuskopion palautus toimii kuvineen.
+route('POST', '/api/admin/reset', ({ user, body }) => {
+  if (body.confirm !== 'NOLLAA') fail(400, 'Vahvista nollaus kirjoittamalla NOLLAA.');
+  const backup = `db-ennen-nollausta-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  fs.copyFileSync(DB_FILE, path.join(DATA_DIR, backup));
+  db.categories = db.categories.filter((c) => c.fixed).map((c) => ({ ...c, advanced: true }));
+  db.catVotes = []; db.nominees = []; db.nomVotes = [];
+  db.finalVotes = {}; db.finalVoteAt = {}; db.feedback = [];
+  db.settings.phase = 1; db.settings.deadline = '';
+  for (const u of Object.values(db.users)) u.locked = {};
+  if (body.users) for (const u of Object.values(db.users)) if (!u.root) delete db.users[u.id];
+  writeDb();
+  const notice = `Gaala nollattu. Varmuuskopio tallennettu: ${backup}`;
+  // Jos admin poisti samalla oman osallistujatunnuksensa, palataan kirjautumissivulle
+  return db.users[user.id] ? { ...stateFor(user), notice } : { ...stateFor(null), notice };
+}, { admin: true });
 
 // ---------- Admin ----------
 // Osallistujat ja koodit

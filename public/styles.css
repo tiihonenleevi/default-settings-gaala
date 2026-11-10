@@ -631,3 +631,9 @@ td.fb-text { white-space: normal; overflow-wrap: anywhere; min-width: 200px; }
 .stats-sec b { font-weight: 500; overflow-wrap: anywhere; }
 .stats-sec small { font-size: 12px; color: var(--ink-faint); overflow-wrap: anywhere; }
 @media (max-width: 560px) { .stats-sec li { grid-template-columns: 1fr; } .stats-dialog { margin-block: 0; } }
+
+/* ---------- Vaaravyöhyke ---------- */
+.danger-panel { border-color: rgba(196, 71, 74, 0.45); background: linear-gradient(180deg, rgba(128, 27, 29, 0.14), rgba(128, 27, 29, 0.04)); }
+.danger-panel .eyebrow { color: var(--danger-text); }
+.btn--danger { background: linear-gradient(180deg, #9d2629, var(--red)); color: #fff; border-color: transparent; }
+.btn--danger:hover { filter: brightness(1.12); }

@@ -514,6 +514,14 @@ function adminView() {
 
     ${s.phase === 5 ? resultsView() : ''}
     ${s.phase === 5 || (a.feedbackLog || []).length ? feedbackLogView() : ''}
+
+    <div class="panel danger-panel">
+      <p class="eyebrow">Vaaravyöhyke</p>
+      <h3 class="h3">Nollaa gaala</h3>
+      <p class="small muted" style="margin:0">Poistaa kaikki kategoriaehdotukset, ehdokkaat, äänet, lukitukset ja palautteet ja palauttaa vaiheen 1. Osallistujat, koodit, kuvat ja asetukset säilyvät, ellei alla toisin valita. Palvelin tallentaa nykyisen tilanteen varmuuskopioksi ennen nollausta.</p>
+      <label class="check small"><input type="checkbox" id="reset-users"> Poista myös osallistujat (koodit lakkaavat toimimasta)</label>
+      <div><button class="btn btn--danger btn--sm" type="button" data-act="reset-gala">Nollaa gaala</button></div>
+    </div>
   </section>`;
 }
 
@@ -575,7 +583,7 @@ function feedbackView() {
       ${list.length ? list.map((f) => `
       <article class="feedback-item">
         <p>${esc(f.text).replace(/\n/g, '<br>')}</p>
-        <footer><span>— ${f.mine ? 'sinä (näkyy muille nimettömänä)' : 'nimetön'} · ${fmtTime(f.createdAt)}</span>${f.mine || state.me.admin ? `<button class="btn btn--ghost" data-act="fb-del" data-id="${f.id}">Poista</button>` : ''}</footer>
+        <footer><span>— ${f.mine ? 'sinä (näkyy muille nimettömänä)' : 'nimetön'} · ${fmtTime(f.createdAt)}</span></footer>
       </article>`).join('') : '<div class="empty">Ei vielä palautetta. Ole ensimmäinen.</div>'}
     </div>
   </section>`;
@@ -810,8 +818,18 @@ document.addEventListener('click', async (e) => {
         .then(() => { cropping = null; render(); }).catch(() => {});
       break;
     }
+    case 'reset-gala': {
+      const users = !!document.getElementById('reset-users')?.checked;
+      const what = users ? 'KAIKKI: ehdotukset, äänet, palautteet JA osallistujat koodeineen' : 'kaikki ehdotukset, ehdokkaat, äänet, lukitukset ja palautteet';
+      const typed = prompt(`Tämä poistaa ${what}, ja gaala alkaa alusta vaiheesta 1.\n\nKirjoita NOLLAA vahvistaaksesi:`);
+      if (typed === null) break;
+      if (typed.trim() !== 'NOLLAA') { toast('Nollausta ei tehty: vahvistussana ei täsmännyt.', true); break; }
+      editing = null; proposing = null; cropping = null; stats = null;
+      await api('POST', '/api/admin/reset', { confirm: 'NOLLAA', users }).catch(() => {});
+      break;
+    }
     case 'fb-del':
-      if (confirm('Poistetaanko palaute?')) await api('DELETE', `/api/feedback/${id}`, {}).catch(() => {});
+      if (confirm('Poistetaanko palaute pysyvästi?')) await api('DELETE', `/api/feedback/${id}`, {}).catch(() => {});
       break;
     case 'photo-del':
       if (confirm('Poistetaanko kuva?')) await api('DELETE', `/api/admin/${t.dataset.target === 'user' ? 'users' : 'nominees'}/${id}/photo`, {}).catch(() => {});
