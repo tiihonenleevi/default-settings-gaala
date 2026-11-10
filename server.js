@@ -50,6 +50,7 @@ function emptyDb() {
     nominees: [],
     nomVotes: [],
     finalVotes: {},
+    finalVoteAt: {}, // milloin finaaliääni annettiin: { userId: { categoryId: aikaleima } }
     feedback: [], // suljetun äänestyksen palautteet: { id, userId, text, createdAt }
   };
 }
@@ -440,7 +441,7 @@ route('POST', '/api/categories/:id/vote', ({ user, params }) => {
   else {
     const used = db.catVotes.filter((v) => v.userId === user.id).length;
     if (used >= db.settings.catVotes) fail(400, `Olet käyttänyt kaikki ${db.settings.catVotes} ääntäsi. Poista ääni toisesta kategoriasta ensin.`);
-    db.catVotes.push({ userId: user.id, categoryId: cat.id });
+    db.catVotes.push({ userId: user.id, categoryId: cat.id, at: now() });
   }
   writeDb();
   return stateFor(user);
@@ -487,7 +488,7 @@ route('POST', '/api/nominees/:id/vote', ({ user, params }) => {
     const inCat = new Set(db.nominees.filter((n) => n.categoryId === nom.categoryId).map((n) => n.id));
     const used = db.nomVotes.filter((v) => v.userId === user.id && inCat.has(v.nomineeId)).length;
     if (used >= db.settings.votesP2) fail(400, `Sinulla on ${db.settings.votesP2} ääntä per kategoria. Poista ääni ensin toiselta ehdokkaalta.`);
-    db.nomVotes.push({ userId: user.id, nomineeId: nom.id });
+    db.nomVotes.push({ userId: user.id, nomineeId: nom.id, at: now() });
   }
   writeDb();
   return stateFor(user);
@@ -511,6 +512,8 @@ route('POST', '/api/final', ({ user, body }) => {
   requireUnlocked(user);
   const nom = db.nominees.find((n) => n.id === body.nomineeId && n.finalist) || fail(404, 'Finalistia ei löydy.');
   db.finalVotes[user.id] = { ...(db.finalVotes[user.id] || {}), [nom.categoryId]: nom.id };
+  db.finalVoteAt = db.finalVoteAt || {};
+  db.finalVoteAt[user.id] = { ...(db.finalVoteAt[user.id] || {}), [nom.categoryId]: now() };
   writeDb();
   return stateFor(user);
 });
@@ -612,6 +615,29 @@ route('POST', '/api/admin/users/:id/crop', ({ user, params, body }) => {
   return { ...stateFor(user), notice: 'Rajaus tallennettu.' };
 }, { admin: true });
 
+// Osallistujan tilastot: kaikki ehdotukset, äänet, lukitukset ja palautteet aikaleimoineen.
+// Äänille aika tallentuu vasta tästä versiosta alkaen (vanhoissa at puuttuu).
+route('GET', '/api/admin/users/:id/stats', ({ params }) => {
+  const u = db.users[params.id];
+  if (!u || u.root) fail(404, 'Osallistujaa ei löydy.');
+  const cat = (id) => db.categories.find((c) => c.id === id);
+  const nom = (id) => db.nominees.find((n) => n.id === id);
+  const catName = (id) => (cat(id) ? cat(id).name : 'poistettu kategoria');
+  const fin = db.finalVotes[u.id] || {}; const finAt = (db.finalVoteAt || {})[u.id] || {};
+  return {
+    name: u.name,
+    createdAt: u.createdAt || null,
+    lastLogin: u.lastLogin || null,
+    locks: Object.entries(u.locked || {}).map(([p, at]) => ({ phase: Number(p), phaseName: PHASES[p], at })),
+    categories: db.categories.filter((c) => c.by === u.id).map((c) => ({ name: c.name, description: c.description, at: c.createdAt, editedAt: c.editedAt || null, advanced: !!c.advanced })),
+    catVotes: db.catVotes.filter((v) => v.userId === u.id).map((v) => ({ name: catName(v.categoryId), at: v.at || null })),
+    nominees: db.nominees.filter((n) => n.by === u.id).map((n) => ({ category: catName(n.categoryId), name: nomName(n), reason: n.reason, at: n.createdAt, editedAt: n.editedAt || null, finalist: !!n.finalist })),
+    nomVotes: db.nomVotes.filter((v) => v.userId === u.id && nom(v.nomineeId)).map((v) => { const n = nom(v.nomineeId); return { category: catName(n.categoryId), name: nomName(n), reason: n.reason, at: v.at || null }; }),
+    finals: Object.entries(fin).filter(([, nid]) => nom(nid)).map(([cid, nid]) => ({ category: catName(cid), name: nomName(nom(nid)), reason: nom(nid).reason, at: finAt[cid] || null })),
+    feedback: (db.feedback || []).filter((f) => f.userId === u.id).map((f) => ({ text: f.text, at: f.createdAt })),
+  };
+}, { admin: true });
+
 route('DELETE', '/api/admin/users/:id', ({ user, params }) => {
   const u = db.users[params.id];
   if (!u || u.root) fail(404, 'Osallistujaa ei löydy.');
@@ -621,6 +647,7 @@ route('DELETE', '/api/admin/users/:id', ({ user, params }) => {
   db.catVotes = db.catVotes.filter((v) => v.userId !== u.id);
   db.nomVotes = db.nomVotes.filter((v) => v.userId !== u.id);
   delete db.finalVotes[u.id];
+  if (db.finalVoteAt) delete db.finalVoteAt[u.id];
   writeDb();
   return stateFor(user);
 }, { admin: true });
@@ -760,6 +787,7 @@ function applyCategoryEdit(cat, body) {
     cat.name = name;
   }
   if ('description' in body) cat.description = clean(body.description, 160);
+  cat.editedAt = now();
 }
 
 function applyNomineeEdit(nom, body) {
@@ -780,6 +808,7 @@ function applyNomineeEdit(nom, body) {
   nom.personId = personId;
   nom.name = name;
   nom.reason = reason;
+  nom.editedAt = now();
 }
 
 // Lukitus tallennetaan käyttäjälle vaihekohtaisesti: user.locked = { "1": aikaleima, ... }

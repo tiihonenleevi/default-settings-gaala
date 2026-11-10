@@ -10,6 +10,8 @@ let editing = null;
 let proposing = null;
 // Rajausikkuna (vain admin): { target: 'user' | 'nom', id, src, x, y, z, name, reason } tai null
 let cropping = null;
+// Osallistujan tilastoikkuna (vain admin): palvelimen palauttamat tilastot tai null
+let stats = null;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -105,7 +107,8 @@ function mainView() {
       <span>Default Settings Gaala</span>
     </footer>
   </main>
-  ${cropping ? cropView() : ''}`;
+  ${cropping ? cropView() : ''}
+  ${stats ? statsView() : ''}`;
 }
 
 function stepper() {
@@ -544,6 +547,7 @@ function participantsView() {
           <td><input type="checkbox" style="width:18px;height:18px;accent-color:var(--gold)" data-act="user-admin" data-id="${p.id}" ${p.admin ? 'checked' : ''} aria-label="Admin: ${esc(p.name)}"></td>
           <td class="act">
             ${p.locked && ph <= 4 ? `<button class="btn btn--ghost" data-act="user-unlock" data-id="${p.id}" data-name="${esc(p.name)}">Avaa lukko</button>` : ''}
+            <button class="btn btn--ghost" data-act="user-stats" data-id="${p.id}">Tilastot</button>
             <button class="btn btn--ghost" data-act="copy-link" data-code="${esc(p.code)}" data-name="${esc(p.name)}">Kopioi linkki</button>
             <button class="btn btn--ghost" data-act="user-regen" data-id="${p.id}">Uusi koodi</button>
             <button class="btn btn--ghost" data-act="user-del" data-id="${p.id}">Poista</button>
@@ -595,6 +599,49 @@ function feedbackLogView() {
           <td class="act"><button class="btn btn--ghost" data-act="fb-del" data-id="${f.id}">Poista</button></td>
         </tr>`).join('')}</tbody>
     </table></div>` : '<div class="empty">Ei vielä palautetta.</div>'}
+  </div>`;
+}
+
+// ---------- Osallistujan tilastot (admin) ----------
+// Päivä ja kellonaika, esim. "ti 10.11. klo 23.25"
+function fmtWhen(iso) {
+  if (!iso) return 'aika ei tiedossa';
+  try { return new Date(iso).toLocaleString('fi-FI', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
+}
+
+function statsView() {
+  const st = stats;
+  // Jokainen osio: otsikko ja rivit [aika, pääteksti, lisätieto]; rivit aikajärjestyksessä
+  const byTime = (a, b) => String(a.at || '').localeCompare(String(b.at || ''));
+  const sections = [
+    ['Vaihe 1 · Kategoriaehdotukset', [...st.categories].sort(byTime).map((c) => [c.at, c.name, [c.description, c.editedAt ? `muokattu ${fmtWhen(c.editedAt)}` : '', c.advanced ? 'pääsi gaalaan' : ''].filter(Boolean).join(' · ')])],
+    ['Vaihe 2 · Kategoria-äänet', [...st.catVotes].sort(byTime).map((v) => [v.at, v.name, ''])],
+    ['Vaihe 3 · Ehdokasehdotukset', [...st.nominees].sort(byTime).map((n) => [n.at, `${n.name} – ${n.reason}`, [n.category, n.editedAt ? `muokattu ${fmtWhen(n.editedAt)}` : '', n.finalist ? 'finalisti' : ''].filter(Boolean).join(' · ')])],
+    ['Vaihe 3 · Ehdokasäänet', [...st.nomVotes].sort(byTime).map((v) => [v.at, `${v.name} – ${v.reason}`, v.category])],
+    ['Vaihe 4 · Finaaliäänet', [...st.finals].sort(byTime).map((v) => [v.at, `${v.name} – ${v.reason}`, v.category])],
+    ['Lukitukset', [...st.locks].sort(byTime).map((l) => [l.at, `Lukko sisään: vaihe ${l.phase}`, l.phaseName])],
+    ['Palaute', [...st.feedback].sort(byTime).map((f) => [f.at, f.text, ''])],
+  ];
+  const count = (k) => st[k].length;
+  return `
+  <div class="crop-overlay" role="dialog" aria-modal="true" aria-labelledby="stats-h">
+    <div class="panel stats-dialog">
+      <div class="stats-head">
+        <div><p class="eyebrow">Tilastot</p><h2 class="h2" id="stats-h">${esc(st.name)}</h2></div>
+        <button class="btn btn--ghost" type="button" data-act="stats-close">Sulje</button>
+      </div>
+      <p class="small muted" style="margin:0">Viimeksi kirjautunut: ${st.lastLogin ? fmtWhen(st.lastLogin) : 'ei vielä kirjautunut'} · Lisätty: ${fmtWhen(st.createdAt)}</p>
+      <div class="stats-chips">
+        <span><b>${count('categories')}</b> kategoriaehdotusta</span><span><b>${count('catVotes')}</b> kategoria-ääntä</span>
+        <span><b>${count('nominees')}</b> ehdokasehdotusta</span><span><b>${count('nomVotes')}</b> ehdokasääntä</span>
+        <span><b>${count('finals')}</b> finaaliääntä</span><span><b>${count('locks')}</b> lukitusta</span>
+      </div>
+      ${sections.map(([title, rows]) => `
+      <section class="stats-sec">
+        <h3>${title} <span class="muted">· ${rows.length}</span></h3>
+        ${rows.length ? `<ol>${rows.map(([at, main, extra]) => `<li><time>${fmtWhen(at)}</time><span><b>${esc(main)}</b>${extra ? `<small>${esc(extra)}</small>` : ''}</span></li>`).join('')}</ol>` : '<p class="small muted">Ei mitään.</p>'}
+      </section>`).join('')}
+    </div>
   </div>`;
 }
 
@@ -659,7 +706,10 @@ document.addEventListener('pointerup', () => { cropDrag = null; });
 document.addEventListener('input', (e) => {
   if (e.target.matches('[data-crop-zoom]') && cropping) { cropping.z = Number(e.target.value); applyCropPreview(); }
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && cropping) { cropping = null; render(); } });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (cropping) { cropping = null; render(); } else if (stats) { stats = null; render(); }
+});
 
 // Kuvan valinta: tiedostokenttä napin sisällä; muutos käsitellään change-tapahtumassa
 function photoButton(target, id, label) {
@@ -748,6 +798,10 @@ document.addEventListener('click', async (e) => {
       if (confirm(`Valitaanko jokaiseen kategoriaan ${state.limits.finalists} eniten ääniä saanutta finalistiksi? Nykyiset finalistivalinnat korvataan.`)) await api('POST', '/api/admin/nominees/auto-finalists', {}).catch(() => {});
       break;
     case 'crop-open': openCrop(t.dataset.target, id); break;
+    case 'user-stats':
+      try { stats = await api('GET', `/api/admin/users/${id}/stats`); render(); } catch {}
+      break;
+    case 'stats-close': stats = null; render(); break;
     case 'crop-cancel': cropping = null; render(); break;
     case 'crop-reset': cropping.x = 50; cropping.y = 50; cropping.z = 1; applyCropPreview(); break;
     case 'crop-save': {
@@ -872,7 +926,7 @@ document.addEventListener('submit', async (e) => {
 
 // Päivitä tila taustalla (ei kun käyttäjä kirjoittaa)
 setInterval(() => {
-  if (document.hidden || cropping) return;
+  if (document.hidden || cropping || stats) return;
   const a = document.activeElement;
   if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'radio') return;
   (async () => {
