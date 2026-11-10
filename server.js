@@ -294,7 +294,8 @@ function stateFor(user) {
   }));
   base.people = people().map((u) => ({ id: u.id, name: u.name, photo: photoOf(u.photo, u.photoCrop) }));
   if (s.phase === 5) {
-    base.feedback = (db.feedback || []).map((f) => ({ id: f.id, name: userName(f.userId) || 'Poistettu osallistuja', text: f.text, createdAt: f.createdAt, mine: f.userId === uid }));
+    // Muille nimettömänä: kirjoittajaa ei lähetetä selaimeen lainkaan (vain oma-lippu poistoa varten)
+    base.feedback = (db.feedback || []).map((f) => ({ id: f.id, text: f.text, createdAt: f.createdAt, mine: f.userId === uid }));
   }
 
   base.used = {
@@ -349,6 +350,8 @@ function adminView() {
     voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nomVotes.map((v) => v.userId)).size, p4: Object.keys(db.finalVotes).length },
     locked: Object.values(db.users).filter((u) => !u.root && isLocked(u)).length,
     winners: winnersFor(advancedCats().map((c) => c.id)),
+    // Palauteloki: vain adminit näkevät kirjoittajan
+    feedbackLog: (db.feedback || []).map((f) => ({ id: f.id, name: userName(f.userId) || 'Poistettu osallistuja', text: f.text, createdAt: f.createdAt })),
   };
 }
 
@@ -525,8 +528,7 @@ route('POST', '/api/lock', ({ user }) => {
   return { ...stateFor(user), notice: 'Lukko sisään! Vastauksesi tähän vaiheeseen on tallennettu.' };
 });
 
-// Palaute suljetussa vaiheessa. Otsikko on "Anonyymi palaute", mutta nimi näkyy kaikille (kaveriporukan vitsi);
-// käyttöliittymä kertoo tämän ennen lähettämistä.
+// Palaute suljetussa vaiheessa: muille osallistujille nimetön, adminit näkevät kirjoittajan palautelokista.
 route('POST', '/api/feedback', ({ user, body }) => {
   requirePhase(5);
   requireVoter(user);

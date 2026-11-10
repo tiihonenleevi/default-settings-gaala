@@ -510,6 +510,7 @@ function adminView() {
     </div>` : ''}
 
     ${s.phase === 5 ? resultsView() : ''}
+    ${s.phase === 5 || (a.feedbackLog || []).length ? feedbackLogView() : ''}
   </section>`;
 }
 
@@ -554,7 +555,7 @@ function participantsView() {
 }
 
 // ---------- Palaute (suljettu vaihe) ----------
-// Otsikko "Anonyymi palaute" on vitsi: nimi näkyy kaikille, ja siitä kerrotaan ennen lähettämistä.
+// Palaute näkyy muille ilman nimeä; järjestäjät näkevät kirjoittajan hallinnan palautelokista.
 function feedbackView() {
   const list = [...(state.feedback || [])].reverse();
   return `
@@ -562,6 +563,7 @@ function feedbackView() {
     <form class="panel feedback-form" id="feedback-form">
       <p class="eyebrow">Anonyymi palaute</p>
       <h2 class="h2">Mitä mieltä olit?</h2>
+      <p class="small muted" style="margin:0">Palaute näkyy muille ilman nimeä. Järjestäjät näkevät kirjoittajan.</p>
       <div class="field"><label for="fb-text" class="sr-only">Palaute</label><textarea class="input" id="fb-text" data-keep rows="4" maxlength="1000" placeholder="Kerro gaalasta, äänestyksestä tai mistä vain…"></textarea></div>
       <div><button class="btn btn--primary btn--sm" type="submit">Lähetä palaute</button></div>
     </form>
@@ -569,10 +571,31 @@ function feedbackView() {
       ${list.length ? list.map((f) => `
       <article class="feedback-item">
         <p>${esc(f.text).replace(/\n/g, '<br>')}</p>
-        <footer><span>— ${esc(f.name)}</span>${f.mine || state.me.admin ? `<button class="btn btn--ghost" data-act="fb-del" data-id="${f.id}">Poista</button>` : ''}</footer>
+        <footer><span>— ${f.mine ? 'sinä (näkyy muille nimettömänä)' : 'nimetön'} · ${fmtTime(f.createdAt)}</span>${f.mine || state.me.admin ? `<button class="btn btn--ghost" data-act="fb-del" data-id="${f.id}">Poista</button>` : ''}</footer>
       </article>`).join('') : '<div class="empty">Ei vielä palautetta. Ole ensimmäinen.</div>'}
     </div>
   </section>`;
+}
+
+const fmtTime = (iso) => { try { return new Date(iso).toLocaleString('fi-FI', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
+
+// Hallinnan palauteloki: kirjoittaja näkyy vain täällä
+function feedbackLogView() {
+  const log = [...(state.admin.feedbackLog || [])].reverse();
+  return `
+  <div style="display:grid;gap:12px">
+    <p class="eyebrow">Palauteloki · ${log.length}</p>
+    ${log.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Aika</th><th>Kirjoittaja</th><th>Palaute</th><th></th></tr></thead>
+      <tbody>${log.map((f) => `
+        <tr>
+          <td class="small" style="white-space:nowrap">${fmtTime(f.createdAt)}</td>
+          <td><b style="font-weight:500">${esc(f.name)}</b></td>
+          <td class="fb-text">${esc(f.text).replace(/\n/g, '<br>')}</td>
+          <td class="act"><button class="btn btn--ghost" data-act="fb-del" data-id="${f.id}">Poista</button></td>
+        </tr>`).join('')}</tbody>
+    </table></div>` : '<div class="empty">Ei vielä palautetta.</div>'}
+  </div>`;
 }
 
 // ---------- Rajausikkuna (admin) ----------
@@ -837,7 +860,6 @@ document.addEventListener('submit', async (e) => {
     } else if (f.id === 'feedback-form') {
       const text = v('fb-text');
       if (!text) return;
-      if (!confirm('Huom: palaute ei oikeasti ole anonyymi – se näkyy kaikille nimelläsi. Lähetetäänkö?')) return;
       await api('POST', '/api/feedback', { text });
       clear('fb-text');
     } else if (f.id === 'settings-form') {

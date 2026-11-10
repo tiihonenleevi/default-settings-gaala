@@ -609,3 +609,5 @@ td.num .voters { margin-left: auto; }
   .person-card { width: 92px; padding-inline: 4px; }
   .person-photo { width: 56px; height: 56px; }
 }
+td.fb-text { white-space: normal; overflow-wrap: anywhere; min-width: 200px; }
+@media (max-width: 640px) { .table-wrap:has(.fb-text) tbody tr { grid-template-columns: 1fr auto; } .table-wrap td.fb-text { grid-column: 1 / -1; min-width: 0; } }
