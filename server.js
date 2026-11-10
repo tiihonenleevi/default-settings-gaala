@@ -50,6 +50,7 @@ function emptyDb() {
     nominees: [],
     nomVotes: [],
     finalVotes: {},
+    feedback: [], // suljetun äänestyksen palautteet: { id, userId, text, createdAt }
   };
 }
 
@@ -184,6 +185,14 @@ function deleteImage(name) {
 
 const imgUrl = (name) => (name ? `/images/${name}` : null);
 
+// Rajaus: kohdistuspiste (x, y prosentteina) ja zoom (1–4). Alkuperäinen kuva säilyy, joten rajausta voi muuttaa myöhemmin.
+const DEFAULT_CROP = { x: 50, y: 50, z: 1 };
+function cleanCrop(c) {
+  const num = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
+  return { x: num(c && c.x, 0, 100, 50), y: num(c && c.y, 0, 100, 50), z: num(c && c.z, 1, 4, 1) };
+}
+const photoOf = (name, crop) => (name ? { src: imgUrl(name), ...(crop || DEFAULT_CROP) } : null);
+
 // Kuvat näytetään vain kirjautuneille (sivu on julkisessa osoitteessa)
 function serveImage(req, res, pathname) {
   const name = pathname.slice('/images/'.length);
@@ -197,9 +206,14 @@ function serveImage(req, res, pathname) {
 
 // ---------- Henkilöt ja ehdokkaat ----------
 // Ehdokas on henkilö (osallistuja) + peruste. Nimi ja kuva tulevat henkilöltä, ellei ehdokkaalle ole asetettu omaa kuvaa.
-const people = () => Object.values(db.users).filter((u) => !u.root).sort((a, b) => a.name.localeCompare(b.name, 'fi'));
+const people = () => Object.values(db.users).filter((u) => !u.root && u.nominable !== false).sort((a, b) => a.name.localeCompare(b.name, 'fi'));
 const nomName = (n) => (n.personId && db.users[n.personId] ? db.users[n.personId].name : n.name);
-const nomPhoto = (n) => imgUrl(n.photo || (n.personId && db.users[n.personId] ? db.users[n.personId].photo : null));
+// Kortin oma kuva voittaa; muuten henkilön kuva. Kortin oma rajaus voittaa henkilön rajauksen.
+function nomPhoto(n) {
+  if (n.photo) return photoOf(n.photo, n.crop);
+  const p = n.personId && db.users[n.personId];
+  return p && p.photo ? photoOf(p.photo, n.crop || p.photoCrop) : null;
+}
 const userName = (id) => (id && db.users[id] ? db.users[id].name : null);
 
 // Ehdokasvaiheen äänivaatimus: jokaisessa kategoriassa käytettävä kaikki äänet (tai niin monta kuin ehdokkaita on)
@@ -278,7 +292,10 @@ function stateFor(user) {
     id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), finalist: !!n.finalist,
     mine: n.by === uid, myVote: myNomVotes.has(n.id), myFinal: myFinal[n.categoryId] === n.id,
   }));
-  base.people = people().map((u) => ({ id: u.id, name: u.name, photo: imgUrl(u.photo) }));
+  base.people = people().map((u) => ({ id: u.id, name: u.name, photo: photoOf(u.photo, u.photoCrop) }));
+  if (s.phase === 5) {
+    base.feedback = (db.feedback || []).map((f) => ({ id: f.id, name: userName(f.userId) || 'Poistettu osallistuja', text: f.text, createdAt: f.createdAt, mine: f.userId === uid }));
+  }
 
   base.used = {
     catVotes: myCatVotes.size,
@@ -318,7 +335,7 @@ function adminView() {
   const fin = finalCounts();
   return {
     participants: Object.values(db.users).filter((u) => !u.root).map((u) => ({
-      id: u.id, name: u.name, code: fmtCode(u.code), admin: !!u.admin, joined: !!u.lastLogin, photo: imgUrl(u.photo),
+      id: u.id, name: u.name, code: fmtCode(u.code), admin: !!u.admin, joined: !!u.lastLogin, photo: photoOf(u.photo, u.photoCrop), nominable: u.nominable !== false,
       p1: db.categories.filter((c) => c.by === u.id).length,
       p2: db.catVotes.filter((v) => v.userId === u.id).length,
       p3: db.nomVotes.filter((v) => v.userId === u.id).length,
@@ -326,7 +343,8 @@ function adminView() {
       locked: isLocked(u),
     })).sort((a, b) => a.name.localeCompare(b.name, 'fi')),
     categories: db.categories.map((c) => ({ id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, votes: catCounts[c.id] || 0, byName: userName(c.by) })),
-    nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), ownPhoto: !!n.photo, finalist: !!n.finalist, votes: nomCounts[n.id] || 0, finalVotes: fin[n.id] || 0, byName: userName(n.by) })),
+    nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), ownPhoto: !!n.photo, finalist: !!n.finalist, votes: nomCounts[n.id] || 0, finalVotes: fin[n.id] || 0, byName: userName(n.by),
+      finalVoters: db.settings.phase >= 4 ? Object.entries(db.finalVotes).filter(([, v]) => v[n.categoryId] === n.id).map(([uid]) => userName(uid) || 'poistettu').sort((a, b) => a.localeCompare(b, 'fi')) : [] })),
     nomVoteNeed: nomVoteNeed(null).reduce((sum, x) => sum + x.need, 0),
     voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nomVotes.map((v) => v.userId)).size, p4: Object.keys(db.finalVotes).length },
     locked: Object.values(db.users).filter((u) => !u.root && isLocked(u)).length,
@@ -432,7 +450,7 @@ route('POST', '/api/nominees', ({ user, body }) => {
   requireUnlocked(user);
   const cat = advancedCats().find((c) => c.id === body.categoryId) || fail(404, 'Kategoriaa ei löydy.');
   const person = db.users[body.personId];
-  if (!person || person.root) fail(404, 'Valitse ehdokas korteista.');
+  if (!person || person.root || person.nominable === false) fail(404, 'Valitse ehdokas korteista.');
   const reason = clean(body.reason, 160);
   if (reason.length < 3) fail(400, 'Kirjoita myös mistä ehdotat – sama henkilö voi olla ehdolla useammasta aiheesta.');
   if (db.nominees.some((n) => n.categoryId === cat.id && n.personId === person.id && norm(n.reason) === norm(reason))) fail(409, 'Sama ehdotus on jo listalla – äänestä sitä.');
@@ -507,6 +525,28 @@ route('POST', '/api/lock', ({ user }) => {
   return { ...stateFor(user), notice: 'Lukko sisään! Vastauksesi tähän vaiheeseen on tallennettu.' };
 });
 
+// Palaute suljetussa vaiheessa. Otsikko on "Anonyymi palaute", mutta nimi näkyy kaikille (kaveriporukan vitsi);
+// käyttöliittymä kertoo tämän ennen lähettämistä.
+route('POST', '/api/feedback', ({ user, body }) => {
+  requirePhase(5);
+  requireVoter(user);
+  const text = String(body.text ?? '').replace(/\r\n?/g, '\n').trim().slice(0, 1000);
+  if (text.length < 2) fail(400, 'Kirjoita palaute ensin.');
+  db.feedback = db.feedback || [];
+  if (db.feedback.filter((f) => f.userId === user.id).length >= 20) fail(400, 'Olet jo lähettänyt paljon palautetta.');
+  db.feedback.push({ id: newId(), userId: user.id, text, createdAt: now() });
+  writeDb();
+  return { ...stateFor(user), notice: 'Palaute lähetetty.' };
+});
+
+route('DELETE', '/api/feedback/:id', ({ user, params }) => {
+  const f = (db.feedback || []).find((x) => x.id === params.id) || fail(404, 'Palautetta ei löydy.');
+  if (f.userId !== user.id && !user.admin) fail(403, 'Voit poistaa vain oman palautteesi.');
+  db.feedback = db.feedback.filter((x) => x.id !== f.id);
+  writeDb();
+  return stateFor(user);
+});
+
 // ---------- Admin ----------
 // Osallistujat ja koodit
 route('POST', '/api/admin/users', ({ user, body }) => {
@@ -533,6 +573,7 @@ route('POST', '/api/admin/users/:id', ({ user, params, body }) => {
   if ('name' in body) { const n = clean(body.name, 40); if (n) u.name = n; }
   if (body.regenerate) { u.code = newCode(); u.token = newToken(); u.lastLogin = null; }
   if (body.unlock && u.locked) delete u.locked[db.settings.phase];
+  if ('nominable' in body) u.nominable = !!body.nominable;
   writeDb();
   return stateFor(user);
 }, { admin: true });
@@ -544,6 +585,9 @@ route('POST', '/api/admin/users/:id/photo', ({ user, params, body }) => {
   const name = saveImage(body.image);
   deleteImage(u.photo);
   u.photo = name;
+  u.photoCrop = null;
+  // Korttien rajaukset koskivat vanhaa kuvaa (jos kortilla ei ole omaa kuvaa)
+  for (const n of db.nominees) if (n.personId === u.id && !n.photo) n.crop = null;
   writeDb();
   return { ...stateFor(user), notice: `Kuva tallennettu: ${u.name}.` };
 }, { admin: true, maxBody: 4.5 * 1024 * 1024 });
@@ -553,8 +597,17 @@ route('DELETE', '/api/admin/users/:id/photo', ({ user, params }) => {
   if (!u || u.root) fail(404, 'Osallistujaa ei löydy.');
   deleteImage(u.photo);
   u.photo = null;
+  u.photoCrop = null;
   writeDb();
   return stateFor(user);
+}, { admin: true });
+
+route('POST', '/api/admin/users/:id/crop', ({ user, params, body }) => {
+  const u = db.users[params.id];
+  if (!u || u.root || !u.photo) fail(404, 'Osallistujalla ei ole kuvaa.');
+  u.photoCrop = cleanCrop(body);
+  writeDb();
+  return { ...stateFor(user), notice: 'Rajaus tallennettu.' };
 }, { admin: true });
 
 route('DELETE', '/api/admin/users/:id', ({ user, params }) => {
@@ -662,14 +715,25 @@ route('POST', '/api/admin/nominees/:id/photo', ({ user, params, body }) => {
   const name = saveImage(body.image);
   deleteImage(nom.photo);
   nom.photo = name;
+  nom.crop = null;
   writeDb();
   return { ...stateFor(user), notice: 'Ehdokaskortin kuva tallennettu.' };
 }, { admin: true, maxBody: 4.5 * 1024 * 1024 });
+
+// Kortin rajaus koskee kortilla näkyvää kuvaa (oma kuva tai henkilön kuva)
+route('POST', '/api/admin/nominees/:id/crop', ({ user, params, body }) => {
+  const nom = db.nominees.find((n) => n.id === params.id) || fail(404, 'Ehdokasta ei löydy.');
+  if (!nomPhoto(nom)) fail(404, 'Kortilla ei ole kuvaa.');
+  nom.crop = cleanCrop(body);
+  writeDb();
+  return { ...stateFor(user), notice: 'Rajaus tallennettu.' };
+}, { admin: true });
 
 route('DELETE', '/api/admin/nominees/:id/photo', ({ user, params }) => {
   const nom = db.nominees.find((n) => n.id === params.id) || fail(404, 'Ehdokasta ei löydy.');
   deleteImage(nom.photo);
   nom.photo = null;
+  nom.crop = null;
   writeDb();
   return stateFor(user);
 }, { admin: true });

@@ -8,6 +8,8 @@ let showFinalCounts = false;
 let editing = null;
 // Ehdokasvaiheessa valittu henkilökortti: { catId, personId } tai null (perusteen kirjoittaminen kesken)
 let proposing = null;
+// Rajausikkuna (vain admin): { target: 'user' | 'nom', id, src, x, y, z, name, reason } tai null
+let cropping = null;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -71,7 +73,7 @@ function loginView() {
         <div style="display:grid;gap:24px">
           ${brand()}
           <h1 class="display">Kuka ansaitsee palkinnon tänä vuonna?</h1>
-          <p class="lead">Ensin päätetään kategoriat, sitten ehdokkaat ja lopuksi voittajat. Äänet ovat anonyymejä, ja voittajat paljastetaan gaalassa.</p>
+          <p class="lead">Ensin päätetään kategoriat, sitten ehdokkaat ja lopuksi voittajat. Voittajat paljastetaan gaalassa.</p>
         </div>
         <form class="panel" id="login-form" autocomplete="off">
           <p class="eyebrow">Kirjaudu sisään</p>
@@ -102,7 +104,8 @@ function mainView() {
     <footer class="footer">
       <span>Default Settings Gaala</span>
     </footer>
-  </main>`;
+  </main>
+  ${cropping ? cropView() : ''}`;
 }
 
 function stepper() {
@@ -176,7 +179,7 @@ function phaseBody() {
   if (state.phase === 2) return phaseCategoryVote() + lockBar();
   if (state.phase === 3) return phaseNominees() + lockBar();
   if (state.phase === 4) return phaseFinal() + lockBar();
-  return '';
+  return feedbackView();
 }
 
 // ---------- Lukitus ("Lukko sisään") ----------
@@ -251,7 +254,7 @@ function phaseProposals() {
   return `
   <section class="section">
     <form class="panel" id="cat-form">
-      <div class="cat-head" style="border:0;padding:0"><p class="eyebrow">Uusi kategoria</p><p class="small muted" style="margin:0">Ehdotuksia jäljellä ${Math.max(0, left)} / ${L.maxCategoryProposals}. Ehdottajan nimi ei näy muille.</p></div>
+      <div class="cat-head" style="border:0;padding:0"><p class="eyebrow">Uusi kategoria</p><p class="small muted" style="margin:0">Ehdotuksia jäljellä ${Math.max(0, left)} / ${L.maxCategoryProposals}. Ehdottajan nimi näkyy vain järjestäjille.</p></div>
       <div class="form-row">
         <div class="field"><label for="c-name">Nimi</label><input class="input" id="c-name" data-keep maxlength="60" required placeholder="Esim. Vuoden myöhästyjä" ${left <= 0 ? 'disabled' : ''}></div>
         <div class="field"><label for="c-desc">Kuvaus (valinnainen)</label><input class="input" id="c-desc" data-keep maxlength="160" placeholder="Mistä palkinto annetaan?" ${left <= 0 ? 'disabled' : ''}></div>
@@ -308,7 +311,8 @@ function deleteButton(kind, id) {
 
 // Henkilövalinta ehdokkaan muokkaukseen. Vanhalle vapaalla nimellä tehdylle ehdokkaalle jätetään nimikenttä.
 function personField(k, item) {
-  const ppl = state.people || [];
+  const ppl = [...(state.people || [])];
+  if (item.personId && !ppl.some((p) => p.id === item.personId)) ppl.unshift({ id: item.personId, name: item.name });
   if (!item.personId) return `<div class="field"><label for="e1-${k}">Ehdokas</label><input class="input" id="e1-${k}" data-keep maxlength="60" required value="${esc(item.name)}"></div>`;
   return `<div class="field"><label for="e1-${k}">Ehdokas</label><select class="input" id="e1-${k}" data-keep>${ppl.map((p) => `<option value="${p.id}" ${p.id === item.personId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>`;
 }
@@ -333,7 +337,14 @@ function initial(name) {
 function portrait(item, cls = 'nom-mono') {
   // Jos kuva ei lataudu, näytetään nimikirjain sen tilalla
   const fallback = `<span>${esc(initial(item.name))}</span>`;
-  return `<div class="${cls}${item.photo ? ' has-photo' : ''}" aria-hidden="true">${item.photo ? `<img src="${item.photo}" alt="" loading="lazy" onerror="this.parentNode.classList.remove('has-photo');this.outerHTML=${esc(JSON.stringify(fallback))}">` : fallback}</div>`;
+  return `<div class="${cls}${item.photo ? ' has-photo' : ''}" aria-hidden="true">${item.photo ? `<img src="${item.photo.src}" alt="" loading="lazy" style="${cropStyle(item.photo)}" onerror="this.parentNode.classList.remove('has-photo');this.outerHTML=${esc(JSON.stringify(fallback))}">` : fallback}</div>`;
+}
+
+// Rajaus CSS:llä: kohdistuspiste object-positionilla ja zoom skaalauksella saman pisteen ympäri.
+// Toimii kaikissa kortin muodoissa (pystykortti, pyöreä henkilökuva, hallinnan pikkukuva).
+function cropStyle(c) {
+  const x = Number(c.x ?? 50), y = Number(c.y ?? 50), z = Number(c.z ?? 1);
+  return `object-position:${x}% ${y}%;transform-origin:${x}% ${y}%;transform:scale(${z})`;
 }
 
 // Vaihe 3: ehdokkaat. Ehdotetaan valitsemalla henkilökortti ja kirjoittamalla peruste; äänestetään erikseen.
@@ -488,10 +499,10 @@ function adminView() {
             <tr>
               <td style="width:1%"><input type="checkbox" class="check" style="width:18px;height:18px;accent-color:var(--gold)" data-act="finalist" data-id="${n.id}" ${n.finalist ? 'checked' : ''} aria-label="Finalisti: ${esc(n.name)}"></td>
               <td>${isEditing('nom', n.id, true) ? editForm('nom', n, true) : `<div class="adm-entry">${portrait(n, 'thumb')}<div><b style="font-weight:500">${esc(n.name)}</b>${n.reason ? `<div class="small muted">${esc(n.reason)}</div>` : ''}<div class="by">Ehdottaja: ${esc(n.byName || 'poistettu osallistuja')}</div>
-                <div class="photo-actions">${photoButton('nom', n.id, n.ownPhoto ? 'Vaihda kortin kuva' : 'Kortin oma kuva')}${n.ownPhoto ? `<button class="btn btn--ghost" data-act="photo-del" data-target="nom" data-id="${n.id}">Poista kortin kuva</button>` : ''}</div></div></div>`}</td>
+                <div class="photo-actions">${photoButton('nom', n.id, n.ownPhoto ? 'Vaihda kortin kuva' : 'Kortin oma kuva')}${n.photo ? `<button class="btn btn--ghost" data-act="crop-open" data-target="nom" data-id="${n.id}">Rajaa ja esikatsele</button>` : ''}${n.ownPhoto ? `<button class="btn btn--ghost" data-act="photo-del" data-target="nom" data-id="${n.id}">Poista kortin kuva</button>` : ''}</div></div></div>`}</td>
               <td style="width:25%"><div class="bar"><i style="width:${(n.votes / max) * 100}%"></i></div></td>
               <td class="num">${n.votes}</td>
-              ${s.phase >= 4 && showFinalCounts ? `<td class="num" style="color:var(--gold-text)">${n.finalist ? n.finalVotes + ' fin.' : ''}</td>` : ''}
+              ${s.phase >= 4 && showFinalCounts ? `<td class="num" style="color:var(--gold-text)">${n.finalist ? n.finalVotes + ' fin.' : ''}${n.finalVoters.length ? `<div class="voters">${esc(n.finalVoters.join(', '))}</div>` : ''}</td>` : ''}
               <td class="act">${isEditing('nom', n.id, true) ? '' : `${editButton('nom', n.id, true)}<button class="btn btn--ghost" data-act="del-nom" data-id="${n.id}" aria-label="Poista ${esc(n.name)}">Poista</button>`}</td>
             </tr>`).join('') || `<tr><td colspan="6" class="muted">Ei ehdokkaita.</td></tr>`}</tbody>
         </table></div>`;
@@ -521,13 +532,14 @@ function participantsView() {
       <div><button class="btn btn--secondary btn--sm" type="submit">Luo koodit</button></div>
     </form>
     ${a.participants.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>Nimi</th><th>Koodi</th><th>${ph >= 4 ? 'Finaali' : 'Vaihe ' + ph} · käytetty</th><th>Admin</th><th></th></tr></thead>
+      <thead><tr><th>Nimi</th><th>Koodi</th><th>${ph >= 4 ? 'Finaali' : 'Vaihe ' + ph} · käytetty</th><th>Ehdokkaana</th><th>Admin</th><th></th></tr></thead>
       <tbody>${a.participants.map((p) => `
         <tr>
           <td><div class="adm-entry">${portrait(p, 'thumb')}<div><b style="font-weight:500">${esc(p.name)}</b>${p.joined ? '' : '<div class="small muted">Ei vielä kirjautunut</div>'}
-            <div class="photo-actions">${photoButton('user', p.id, p.photo ? 'Vaihda kuva' : 'Lisää kuva')}${p.photo ? `<button class="btn btn--ghost" data-act="photo-del" data-target="user" data-id="${p.id}">Poista kuva</button>` : ''}</div></div></div></td>
+            <div class="photo-actions">${photoButton('user', p.id, p.photo ? 'Vaihda kuva' : 'Lisää kuva')}${p.photo ? `<button class="btn btn--ghost" data-act="crop-open" data-target="user" data-id="${p.id}">Rajaa</button><button class="btn btn--ghost" data-act="photo-del" data-target="user" data-id="${p.id}">Poista kuva</button>` : ''}</div></div></div></td>
           <td><code class="code">${esc(p.code)}</code></td>
           <td class="small">${ph <= 4 ? status(p) : '–'}${p.locked && ph <= 4 ? ' <span class="tag tag--gold">Lukittu</span>' : ''}</td>
+          <td class="nominable"><input type="checkbox" data-act="user-nominable" data-id="${p.id}" ${p.nominable ? 'checked' : ''} aria-label="Ehdokkaana: ${esc(p.name)}" title="Näkyykö henkilö ehdokaskorteissa"></td>
           <td><input type="checkbox" style="width:18px;height:18px;accent-color:var(--gold)" data-act="user-admin" data-id="${p.id}" ${p.admin ? 'checked' : ''} aria-label="Admin: ${esc(p.name)}"></td>
           <td class="act">
             ${p.locked && ph <= 4 ? `<button class="btn btn--ghost" data-act="user-unlock" data-id="${p.id}" data-name="${esc(p.name)}">Avaa lukko</button>` : ''}
@@ -540,6 +552,91 @@ function participantsView() {
     <p class="small muted" style="margin:0">Linkki kirjaa kaverin sisään suoraan. "Uusi koodi" mitätöi vanhan koodin ja kirjaa kaverin ulos kaikilta laitteilta. Osallistujan kuva näkyy hänen henkilö- ja ehdokaskorteissaan; yksittäiselle ehdokaskortille voi vaihtaa oman kuvan ehdokastaulukosta.</p>` : '<div class="empty">Ei vielä osallistujia. Lisää kaverien nimet yllä, niin jokainen saa oman koodin.</div>'}
   </div>`;
 }
+
+// ---------- Palaute (suljettu vaihe) ----------
+// Otsikko "Anonyymi palaute" on vitsi: nimi näkyy kaikille, ja siitä kerrotaan ennen lähettämistä.
+function feedbackView() {
+  const list = [...(state.feedback || [])].reverse();
+  return `
+  <section class="section feedback">
+    <form class="panel feedback-form" id="feedback-form">
+      <p class="eyebrow">Anonyymi palaute</p>
+      <h2 class="h2">Mitä mieltä olit?</h2>
+      <div class="field"><label for="fb-text" class="sr-only">Palaute</label><textarea class="input" id="fb-text" data-keep rows="4" maxlength="1000" placeholder="Kerro gaalasta, äänestyksestä tai mistä vain…"></textarea></div>
+      <div><button class="btn btn--primary btn--sm" type="submit">Lähetä palaute</button></div>
+    </form>
+    <div class="feedback-list">
+      ${list.length ? list.map((f) => `
+      <article class="feedback-item">
+        <p>${esc(f.text).replace(/\n/g, '<br>')}</p>
+        <footer><span>— ${esc(f.name)}</span>${f.mine || state.me.admin ? `<button class="btn btn--ghost" data-act="fb-del" data-id="${f.id}">Poista</button>` : ''}</footer>
+      </article>`).join('') : '<div class="empty">Ei vielä palautetta. Ole ensimmäinen.</div>'}
+    </div>
+  </section>`;
+}
+
+// ---------- Rajausikkuna (admin) ----------
+// Vedä kuvaa siirtääksesi kohdistuspistettä, liukusäädin zoomaa. Esikatselu näyttää ehdokaskortin ja henkilökortin.
+function openCrop(target, id) {
+  const a = state.admin;
+  const item = target === 'user' ? a.participants.find((p) => p.id === id) : a.nominees.find((n) => n.id === id);
+  if (!item || !item.photo) return;
+  cropping = { target, id, src: item.photo.src, x: item.photo.x, y: item.photo.y, z: item.photo.z, name: item.name, reason: item.reason || '' };
+  render();
+}
+
+function cropView() {
+  const c = cropping; const ph = { src: c.src, x: c.x, y: c.y, z: c.z };
+  return `
+  <div class="crop-overlay" role="dialog" aria-modal="true" aria-labelledby="crop-h">
+    <div class="crop-dialog panel">
+      <p class="eyebrow" id="crop-h">Rajaa kuva · ${esc(c.name)}</p>
+      <p class="small muted" style="margin:0">Vedä kuvaa siirtääksesi, zoomaa liukusäätimellä. Esikatselu näyttää kortin sellaisena kuin osallistujat sen näkevät.</p>
+      <div class="crop-previews">
+        <article class="nom-card crop-card">
+          <div class="nom-media crop-frame" data-crop-frame>${portrait({ name: c.name, photo: ph })}</div>
+          <div class="nom-body"><h3 class="h3">${esc(c.name)}</h3><p>${esc(c.reason || (c.target === 'user' ? 'Ehdokaskortti' : ''))}</p></div>
+          <span class="btn btn--sm btn--secondary" aria-hidden="true">Äänestä</span>
+        </article>
+        <div class="crop-side">
+          <div class="final-card crop-final" aria-hidden="true">${portrait({ name: c.name, photo: ph }, 'final-photo')}<span class="final-body"><b>${esc(c.name)}</b></span></div>
+          <div class="person-card crop-person" aria-hidden="true">${portrait({ name: c.name, photo: ph }, 'person-photo')}<span class="person-name">${esc(c.name)}</span></div>
+        </div>
+      </div>
+      <label class="crop-zoom"><span class="small muted">Zoom</span><input type="range" min="1" max="3" step="0.01" value="${c.z}" data-crop-zoom aria-label="Zoom"></label>
+      <div class="edit-actions"><button class="btn btn--primary btn--sm" type="button" data-act="crop-save">Tallenna rajaus</button><button class="btn btn--ghost" type="button" data-act="crop-reset">Keskitä</button><button class="btn btn--ghost" type="button" data-act="crop-cancel">Peruuta</button></div>
+    </div>
+  </div>`;
+}
+
+// Päivitä kaikki esikatselukuvat ilman koko sivun uudelleenpiirtoa (sujuva vetäminen)
+function applyCropPreview() {
+  document.querySelectorAll('.crop-overlay img').forEach((img) => { img.style.cssText = cropStyle(cropping); });
+  const z = document.querySelector('[data-crop-zoom]'); if (z && Number(z.value) !== cropping.z) z.value = cropping.z;
+}
+
+let cropDrag = null;
+document.addEventListener('pointerdown', (e) => {
+  const frame = e.target.closest('[data-crop-frame]');
+  if (!frame || !cropping) return;
+  e.preventDefault();
+  frame.setPointerCapture(e.pointerId);
+  const r = frame.getBoundingClientRect();
+  cropDrag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x: cropping.x, y: cropping.y, w: r.width, h: r.height };
+});
+document.addEventListener('pointermove', (e) => {
+  if (!cropDrag || e.pointerId !== cropDrag.id) return;
+  // Kuvan vetäminen oikealle tuo esiin vasenta reunaa, joten kohdistuspiste liikkuu vastakkaiseen suuntaan
+  const k = 100 / cropping.z;
+  cropping.x = Math.min(100, Math.max(0, cropDrag.x - ((e.clientX - cropDrag.sx) / cropDrag.w) * k));
+  cropping.y = Math.min(100, Math.max(0, cropDrag.y - ((e.clientY - cropDrag.sy) / cropDrag.h) * k));
+  applyCropPreview();
+});
+document.addEventListener('pointerup', () => { cropDrag = null; });
+document.addEventListener('input', (e) => {
+  if (e.target.matches('[data-crop-zoom]') && cropping) { cropping.z = Number(e.target.value); applyCropPreview(); }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && cropping) { cropping = null; render(); } });
 
 // Kuvan valinta: tiedostokenttä napin sisällä; muutos käsitellään change-tapahtumassa
 function photoButton(target, id, label) {
@@ -567,7 +664,7 @@ function resultsView() {
       <thead><tr><th colspan="3">${esc(cat.name)}</th></tr></thead>
       <tbody>${noms.map((n) => `
         <tr>
-          <td><b style="font-weight:500">${esc(n.name)}</b> ${winners.includes(n.id) ? '<span class="tag tag--red">Voittaja</span>' : ''}${n.reason ? `<div class="small muted">${esc(n.reason)}</div>` : ''}</td>
+          <td><b style="font-weight:500">${esc(n.name)}</b> ${winners.includes(n.id) ? '<span class="tag tag--red">Voittaja</span>' : ''}${n.reason ? `<div class="small muted">${esc(n.reason)}</div>` : ''}<div class="voters">${n.finalVoters.length ? `Äänestäjät: ${esc(n.finalVoters.join(', '))}` : 'Ei ääniä'}</div></td>
           <td class="num">${n.finalVotes} ${n.finalVotes === 1 ? 'ääni' : 'ääntä'}</td>
         </tr>`).join('') || '<tr><td class="muted">Ei finalisteja.</td></tr>'}</tbody>
     </table></div>`).join('')}
@@ -576,7 +673,7 @@ function resultsView() {
 
 function resultsText() {
   return results().map(({ cat, noms, winners }) => {
-    const lines = noms.map((n) => `${winners.includes(n.id) ? '★ ' : '  '}${n.name}${n.reason ? ' – ' + n.reason : ''} (${n.finalVotes})`);
+    const lines = noms.map((n) => `${winners.includes(n.id) ? '★ ' : '  '}${n.name}${n.reason ? ' – ' + n.reason : ''} (${n.finalVotes}${n.finalVoters.length ? ': ' + n.finalVoters.join(', ') : ''})`);
     return `${cat.name}\n${lines.join('\n')}`;
   }).join('\n\n');
 }
@@ -627,6 +724,18 @@ document.addEventListener('click', async (e) => {
     case 'auto-finalists':
       if (confirm(`Valitaanko jokaiseen kategoriaan ${state.limits.finalists} eniten ääniä saanutta finalistiksi? Nykyiset finalistivalinnat korvataan.`)) await api('POST', '/api/admin/nominees/auto-finalists', {}).catch(() => {});
       break;
+    case 'crop-open': openCrop(t.dataset.target, id); break;
+    case 'crop-cancel': cropping = null; render(); break;
+    case 'crop-reset': cropping.x = 50; cropping.y = 50; cropping.z = 1; applyCropPreview(); break;
+    case 'crop-save': {
+      const c = cropping;
+      await api('POST', `/api/admin/${c.target === 'user' ? 'users' : 'nominees'}/${c.id}/crop`, { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 100) / 100 })
+        .then(() => { cropping = null; render(); }).catch(() => {});
+      break;
+    }
+    case 'fb-del':
+      if (confirm('Poistetaanko palaute?')) await api('DELETE', `/api/feedback/${id}`, {}).catch(() => {});
+      break;
     case 'photo-del':
       if (confirm('Poistetaanko kuva?')) await api('DELETE', `/api/admin/${t.dataset.target === 'user' ? 'users' : 'nominees'}/${id}/photo`, {}).catch(() => {});
       break;
@@ -654,6 +763,7 @@ document.addEventListener('change', async (e) => {
   const t = e.target;
   switch (t.dataset.act) {
     case 'final': await api('POST', '/api/final', { nomineeId: t.value }).then(() => toast('Ääni tallennettu.')).catch(() => {}); break;
+    case 'user-nominable': await api('POST', `/api/admin/users/${t.dataset.id}`, { nominable: t.checked }).catch(() => {}); break;
     case 'user-admin': await api('POST', `/api/admin/users/${t.dataset.id}`, { admin: t.checked }).catch(() => {}); break;
     case 'advance': await api('POST', `/api/admin/categories/${t.dataset.id}`, { advanced: t.checked }).catch(() => {}); break;
     case 'finalist': await api('POST', `/api/admin/nominees/${t.dataset.id}`, { finalist: t.checked }).catch(() => {}); break;
@@ -665,14 +775,15 @@ document.addEventListener('change', async (e) => {
         toast('Ladataan kuvaa…');
         const image = await imageToDataUrl(file);
         await api('POST', `/api/admin/${t.dataset.target === 'user' ? 'users' : 'nominees'}/${t.dataset.id}/photo`, { image });
+        openCrop(t.dataset.target, t.dataset.id); // heti rajaukseen ja esikatseluun
       } catch (err) { if (err && err.message) toast(err.message, true); }
       break;
     }
   }
 });
 
-// Pienennä kuva selaimessa ennen lähetystä: pidempi sivu max 800 px, JPEG-laatu 0,85 (yleensä 60–200 kt)
-async function imageToDataUrl(file, max = 800) {
+// Pienennä kuva selaimessa ennen lähetystä: pidempi sivu max 1400 px (riittää zoomaukseen), JPEG-laatu 0,85
+async function imageToDataUrl(file, max = 1400) {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((resolve, reject) => {
@@ -723,6 +834,12 @@ document.addEventListener('submit', async (e) => {
       await api('POST', admin ? `/api/admin/${base}/${id}` : `/api/${base}/${id}/edit`, body);
       editing = null; render();
       toast('Muutokset tallennettu.');
+    } else if (f.id === 'feedback-form') {
+      const text = v('fb-text');
+      if (!text) return;
+      if (!confirm('Huom: palaute ei oikeasti ole anonyymi – se näkyy kaikille nimelläsi. Lähetetäänkö?')) return;
+      await api('POST', '/api/feedback', { text });
+      clear('fb-text');
     } else if (f.id === 'settings-form') {
       await api('POST', '/api/admin/settings', { deadline: v('s-deadline'), targetCategories: v('s-tc'), catVotes: v('s-cv'), votesP2: v('s-v2'), maxCategoryProposals: v('s-mc'), maxNomineeProposals: v('s-mn'), finalists: v('s-fi') });
       toast('Asetukset tallennettu.');
@@ -733,7 +850,7 @@ document.addEventListener('submit', async (e) => {
 
 // Päivitä tila taustalla (ei kun käyttäjä kirjoittaa)
 setInterval(() => {
-  if (document.hidden) return;
+  if (document.hidden || cropping) return;
   const a = document.activeElement;
   if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'radio') return;
   (async () => {

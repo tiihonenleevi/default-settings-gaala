@@ -337,8 +337,7 @@ textarea.input { resize: vertical; min-height: 72px; }
   #users-form + .table-wrap td:nth-child(1) { grid-area: name; }
   #users-form + .table-wrap td:nth-child(2) { grid-area: code; }
   #users-form + .table-wrap td:nth-child(3) { grid-area: status; text-align: right; color: var(--ink-muted); }
-  #users-form + .table-wrap td:nth-child(4) { grid-area: admin; display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-muted); }
-  #users-form + .table-wrap td:nth-child(4)::before { content: "Admin"; }
+
   #users-form + .table-wrap td.act { grid-area: act; display: flex; flex-wrap: wrap; gap: 4px; margin: 4px -10px -6px; padding-top: 6px; border-top: 1px solid var(--border); }
 
   /* Kategoriat ja ehdokkaat: valinta vasemmalla, nimi, palkki + äänet */
@@ -358,7 +357,7 @@ textarea.input { resize: vertical; min-height: 72px; }
 }
 
 /* ---------- Ehdokaskortit (vaihe 2) ---------- */
-.nom-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-3); }
+
 .nom-card {
   display: grid; grid-template-rows: auto 1fr auto; min-width: 0; overflow: hidden;
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--card-shadow);
@@ -391,19 +390,7 @@ textarea.input { resize: vertical; min-height: 72px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } .nom-card:hover { transform: none; } }
 
-/* Ehdokaskortit puhelimessa: vaakakortti, mitali vasemmalla */
-@media (max-width: 560px) {
-  .nom-grid { grid-template-columns: 1fr; gap: 10px; }
-  .nom-card { grid-template-columns: 92px 1fr; grid-template-rows: 1fr auto; }
-  .nom-card:hover { transform: none; }
-  .nom-media { grid-row: 1 / 3; border-bottom: 0; border-right: 1px solid var(--border); }
-  .nom-mono { aspect-ratio: auto; height: 100%; min-height: 120px; }
-  .nom-mono > span:first-child { width: 58px; height: 58px; font-size: 34px; box-shadow: inset 0 0 0 3px rgba(210, 175, 87, 0.08), 0 0 22px rgba(210, 175, 87, 0.15); }
-  .nom-tag { top: auto; bottom: 8px; left: 6px; right: 6px; white-space: normal; text-align: center; font-size: 8px; letter-spacing: 0.1em; padding: 3px 4px; border-radius: 6px; }
-  .nom-body { grid-column: 2; padding: 14px 16px 2px; }
-  .nom-body .h3 { font-size: 22px; }
-  .nom-card > .btn { grid-column: 2; justify-self: start; margin: 10px 16px 14px; }
-}
+
 
 /* ---------- Lukitus ("Lukko sisään") ---------- */
 .lock-panel { justify-items: center; text-align: center; padding: 40px 28px; border-color: rgba(210, 175, 87, 0.35); }
@@ -438,7 +425,7 @@ td .edit-form { padding-block: 4px; }
 
 /* ---------- Henkilökortit (ehdottaminen) ---------- */
 .propose-panel { gap: 18px; }
-.person-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+
 .person-card {
   display: grid; justify-items: center; align-content: start; gap: 8px; padding: 14px 8px 12px; cursor: pointer;
   background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--ink);
@@ -457,8 +444,7 @@ td .edit-form { padding-block: 4px; }
 .propose-form { display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--border); }
 
 /* ---------- Finaalin pystykortit ---------- */
-.final-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
-@media (max-width: 520px) { .final-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }
+
 .final-card {
   position: relative; display: grid; grid-template-rows: auto 1fr auto; overflow: hidden; cursor: pointer; min-width: 0;
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--card-shadow);
@@ -505,6 +491,121 @@ td .edit-form { padding-block: 4px; }
 
 /* ---------- Keskitetyt näkymät (odotus, äänestys suljettu) ---------- */
 .section.screen-center { min-height: calc(100svh - 250px); align-content: center; }
-.hero-head.screen-center { min-height: calc(100svh - 330px); align-content: center; justify-items: center; text-align: center; }
+.hero-head.screen-center { min-height: 42svh; align-content: center; justify-items: center; text-align: center; }
 .hero-head.screen-center .eyebrow::before { display: none; }
 .hero-head.screen-center .lead { margin-inline: auto; }
+
+/* =====================================================================
+   Keskitetty asettelu osallistujan näkymissä (kaikki vaiheet).
+   Hallinta (.admin) pysyy vasemmalle tasattuna, koska taulukot luetaan riveittäin.
+   ===================================================================== */
+.hero-head { justify-items: center; text-align: center; }
+.hero-head .eyebrow { justify-content: center; }
+.hero-head .eyebrow::after { content: ""; width: 36px; height: 1px; background: linear-gradient(90deg, var(--gold), transparent); }
+.hero-head.screen-center .eyebrow::after { display: none; }
+.lead, .notice { margin-inline: auto; }
+.meta-row { justify-content: center; }
+.section .cat-head { justify-items: center; text-align: center; }
+.section .cat-head::after { background: linear-gradient(90deg, transparent, var(--gold) 50%, transparent); }
+.cat-head .row { flex-direction: column; align-items: center; justify-content: center; }
+.admin > .cat-head { justify-items: start; text-align: left; }
+.admin > .cat-head::after { background: linear-gradient(90deg, var(--gold), rgba(210, 175, 87, 0.18) 45%, transparent); }
+.section .panel .field label { text-align: center; }
+.section .form-row > .btn { justify-self: center; }
+.list { width: 100%; max-width: 760px; margin-inline: auto; }
+.item { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+.item .title { justify-content: center; }
+.item-actions, .edit-actions { justify-content: center; }
+.nom-body .item-actions { margin-left: 0; }
+.propose-form { width: 100%; max-width: 560px; margin-inline: auto; }
+.edit-form { text-align: left; }
+.section .edit-form .field label { text-align: left; }
+.empty { width: 100%; max-width: 760px; margin-inline: auto; }
+
+/* Korttiruudukot: keskitetty rivitys, puhelimessa kaksi saraketta */
+.nom-grid, .final-grid, .person-grid { display: flex; flex-wrap: wrap; justify-content: center; }
+.nom-grid, .final-grid { gap: 16px; }
+.person-grid { gap: 10px; }
+.nom-grid > .nom-card, .final-grid > .final-card { width: 240px; }
+.person-card { width: 104px; }
+@media (max-width: 560px) {
+  .nom-grid, .final-grid { gap: 10px; }
+  .nom-grid > .nom-card, .final-grid > .final-card { width: calc(50% - 5px); }
+}
+
+/* Ehdokas- ja finaalikortit: iso pystykuva, joka häivyttyy kortin pohjaan */
+.nom-card, .final-card { --card-solid: #16110e; background: var(--card-solid); display: flex; flex-direction: column; text-align: center; }
+.nom-media { aspect-ratio: 4 / 5; border-bottom: 0; overflow: hidden; }
+.nom-mono { aspect-ratio: auto; height: 100%; }
+.nom-media::after, .final-photo::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 46%; pointer-events: none;
+  background: linear-gradient(to bottom, rgba(22, 17, 14, 0), rgba(22, 17, 14, 0.75) 55%, var(--card-solid));
+}
+.nom-mono > span:first-child { width: 84px; height: 84px; font-size: 48px; margin-bottom: 18%; }
+.nom-tag { left: 50%; transform: translateX(-50%); top: 10px; z-index: 2; white-space: nowrap; }
+.nom-body { position: relative; z-index: 1; margin-top: -46px; padding: 0 16px 4px; justify-items: center; text-align: center; flex: 1; }
+.nom-body p { text-wrap: balance; }
+.nom-card > .btn { margin: 12px 16px 16px; }
+.final-photo { position: relative; border-bottom: 0; }
+.final-photo > span { margin-bottom: 18%; }
+.final-body { position: relative; z-index: 1; margin-top: -42px; justify-items: center; text-align: center; flex: 1; }
+.final-body span { text-wrap: balance; }
+@media (max-width: 560px) {
+  .nom-mono > span:first-child { width: 60px; height: 60px; font-size: 34px; }
+  .nom-body { margin-top: -38px; padding: 0 10px 2px; }
+  .nom-body .h3 { font-size: 20px; }
+  .nom-body p { font-size: 13px; }
+  .nom-card > .btn { margin: 10px 10px 12px; padding-inline: 8px; }
+  .nom-tag { font-size: 8px; letter-spacing: 0.1em; padding: 3px 7px; }
+  .final-body { margin-top: -36px; }
+}
+
+/* ---------- Rajausikkuna ---------- */
+.crop-overlay {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px; overflow-y: auto;
+  background: rgba(5, 3, 2, 0.8); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+.crop-dialog { width: min(660px, 100%); justify-items: center; text-align: center; gap: 18px; }
+.crop-previews { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; justify-content: center; width: 100%; }
+.crop-card { width: 240px; }
+.crop-frame { cursor: grab; touch-action: none; outline: 1px dashed rgba(243, 224, 156, 0.55); outline-offset: -1px; }
+.crop-frame:active { cursor: grabbing; }
+.crop-frame img { pointer-events: none; -webkit-user-drag: none; user-select: none; }
+.crop-side { display: grid; gap: 14px; justify-items: center; }
+.crop-final { width: 150px; cursor: default; }
+.crop-final .final-body { padding-bottom: 12px; }
+.crop-final .final-body b { font-size: 18px; }
+.crop-person { cursor: default; }
+.crop-person:hover { transform: none; }
+.crop-zoom { display: flex; gap: 12px; align-items: center; width: min(360px, 100%); }
+.crop-zoom input { flex: 1; accent-color: var(--gold); }
+@media (max-width: 560px) { .crop-card { width: 200px; } .crop-side { grid-auto-flow: column; align-items: start; } .crop-final { width: 120px; } }
+
+/* ---------- Palaute ---------- */
+.feedback { width: 100%; max-width: 720px; margin-inline: auto; }
+.feedback-form { justify-items: center; text-align: center; }
+.feedback-form .field { width: 100%; }
+.feedback-form textarea { min-height: 110px; }
+.feedback-list { display: grid; gap: 10px; }
+.feedback-item { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px 20px 10px; text-align: center; box-shadow: var(--card-shadow); }
+.feedback-item p { margin: 0 0 6px; font-size: 16px; line-height: 1.55; overflow-wrap: anywhere; }
+.feedback-item footer { display: flex; justify-content: center; align-items: center; gap: 4px; color: var(--gold-text); font-size: 13px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ---------- Hallinta: lisäsarakkeet ---------- */
+td.nominable { text-align: center; }
+td.nominable input { width: 18px; height: 18px; accent-color: var(--gold); }
+.voters { font-size: 12px; line-height: 1.4; color: var(--ink-muted); margin-top: 4px; white-space: normal; max-width: 260px; }
+td.num .voters { margin-left: auto; }
+@media (max-width: 640px) {
+  #users-form + .table-wrap tbody tr { grid-template-areas: "name admin" "code status" "nomin nomin" "act act"; }
+  #users-form + .table-wrap td:nth-child(4) { grid-area: nomin; display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-muted); }
+  #users-form + .table-wrap td:nth-child(4)::before { content: "Ehdokkaana"; }
+  #users-form + .table-wrap td:nth-child(5) { grid-area: admin; display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-muted); }
+  #users-form + .table-wrap td:nth-child(5)::before { content: "Admin"; }
+}
+@media (max-width: 520px) {
+  .hero-head .eyebrow::before, .hero-head .eyebrow::after { display: none; }
+  .person-card { width: 92px; padding-inline: 4px; }
+  .person-photo { width: 56px; height: 56px; }
+}
