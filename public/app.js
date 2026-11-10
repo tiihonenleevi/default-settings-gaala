@@ -721,7 +721,7 @@ document.addEventListener('keydown', (e) => {
 
 // Kuvan valinta: tiedostokenttä napin sisällä; muutos käsitellään change-tapahtumassa
 function photoButton(target, id, label) {
-  return `<label class="btn btn--ghost file-btn">${label}<input type="file" accept="image/*" data-act="photo-upload" data-target="${target}" data-id="${id}"></label>`;
+  return `<label class="btn btn--ghost file-btn">${label}<input type="file" accept="${PHOTO_ACCEPT}" data-act="photo-upload" data-target="${target}" data-id="${id}"></label>`;
 }
 
 function results() {
@@ -877,16 +877,58 @@ document.addEventListener('change', async (e) => {
   }
 });
 
-// Pienennä kuva selaimessa ennen lähetystä: pidempi sivu max 1400 px (riittää zoomaukseen), JPEG-laatu 0,85
+// ---------- Kuvan luku ja pienennys ----------
+// iPhonen HEIC: kuvakirjastosta valittuna iOS muuntaa kuvan yleensä itse JPEGiksi, mutta Tiedostot-sovelluksesta
+// tai tietokoneelta valittu HEIC tulee sellaisenaan, eikä kaikki selaimet osaa avata sitä. Silloin kuva muunnetaan
+// selaimessa JPEGiksi heic2any-kirjastolla (libheif), joka ladataan vain tarvittaessa (~1,3 Mt).
+const HEIC_LIB = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
+// Safarissa image/heic accept-listassa muuttaa JPEG/PNG-kuvat HEIC:ksi (Safari 17 -bugi), joten Applen
+// WebKit-selaimille riittää image/*. Muille lisätään .heic/.heif, jotta tiedostovalitsin näyttää ne.
+const APPLE_WEBKIT = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Safari/.test(navigator.userAgent) && !/Chrome|Chromium|Edg|Android/.test(navigator.userAgent));
+const PHOTO_ACCEPT = APPLE_WEBKIT ? 'image/*' : 'image/*,.heic,.heif';
+
+function loadImage(blob) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => (img.naturalWidth ? resolve({ img, url }) : (URL.revokeObjectURL(url), reject(new Error('tyhjä kuva'))));
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('ei luettavissa')); };
+    img.src = url;
+  });
+}
+
+let heicLib = null;
+function loadHeicLib() {
+  heicLib = heicLib || new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = HEIC_LIB; s.async = true;
+    s.onload = () => (window.heic2any ? resolve(window.heic2any) : reject(new Error('kirjasto')));
+    s.onerror = () => { heicLib = null; s.remove(); reject(new Error('kirjasto')); };
+    document.head.appendChild(s);
+  });
+  return heicLib;
+}
+
+// Pienennä kuva ennen lähetystä: pidempi sivu max 1400 px (riittää zoomaukseen), JPEG-laatu 0,85
 async function imageToDataUrl(file, max = 1400) {
-  const url = URL.createObjectURL(file);
+  let loaded;
   try {
-    const img = await new Promise((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error('Kuvaa ei voitu lukea. Kokeile JPEG- tai PNG-kuvaa.'));
-      i.src = url;
-    });
+    loaded = await loadImage(file);
+  } catch {
+    // Selain ei osannut avata kuvaa: kokeillaan HEIC-muunnosta (tiedostonimi tai tyyppi voi puuttua, joten kokeillaan aina)
+    toast('Muunnetaan kuvaa (HEIC)…');
+    try {
+      const heic2any = await loadHeicLib();
+      const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+      loaded = await loadImage(Array.isArray(out) ? out[0] : out);
+    } catch {
+      throw new Error(/\.(heic|heif)$/i.test(file.name || '') || /hei[cf]/i.test(file.type)
+        ? 'HEIC-kuvan muunnos epäonnistui. Valitse kuva Kuvat-kirjastosta (ei Tiedostot-sovelluksesta) tai vaihda iPhonessa Asetukset → Kamera → Muodot → Yhteensopivin.'
+        : 'Kuvaa ei voitu lukea. Kokeile JPEG-, PNG- tai HEIC-kuvaa.');
+    }
+  }
+  try {
+    const { img } = loaded;
     const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(img.naturalWidth * scale));
@@ -894,7 +936,7 @@ async function imageToDataUrl(file, max = 1400) {
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     return c.toDataURL('image/jpeg', 0.85);
   } finally {
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(loaded.url);
   }
 }
 
