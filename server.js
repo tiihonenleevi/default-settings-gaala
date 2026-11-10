@@ -296,6 +296,17 @@ route('POST', '/api/categories', ({ user, body }) => {
   return stateFor(user);
 });
 
+// Osallistuja muokkaa omaa kategoriaehdotustaan (vaihe 1, ennen lukitusta)
+route('POST', '/api/categories/:id/edit', ({ user, params, body }) => {
+  requirePhase(1);
+  requireVoter(user);
+  requireUnlocked(user);
+  const cat = db.categories.find((c) => c.id === params.id && c.by === user.id) || fail(404, 'Voit muokata vain omia ehdotuksiasi.');
+  applyCategoryEdit(cat, body);
+  writeDb();
+  return stateFor(user);
+});
+
 // Vaihe 2: äänestys gaalaan pääsevistä kategorioista (catVotes ääntä per henkilö)
 route('POST', '/api/categories/:id/vote', ({ user, params }) => {
   requirePhase(2);
@@ -351,6 +362,17 @@ route('POST', '/api/nominees/:id/vote', ({ user, params }) => {
     if (used >= db.settings.votesP2) fail(400, `Sinulla on ${db.settings.votesP2} ääntä per kategoria. Poista ääni ensin toiselta ehdokkaalta.`);
     db.nomVotes.push({ userId: user.id, nomineeId: nom.id });
   }
+  writeDb();
+  return stateFor(user);
+});
+
+// Osallistuja muokkaa omaa ehdokasehdotustaan (vaihe 3, ennen lukitusta)
+route('POST', '/api/nominees/:id/edit', ({ user, params, body }) => {
+  requirePhase(3);
+  requireVoter(user);
+  requireUnlocked(user);
+  const nom = db.nominees.find((n) => n.id === params.id && n.by === user.id) || fail(404, 'Voit muokata vain omia ehdotuksiasi.');
+  applyNomineeEdit(nom, body);
   writeDb();
   return stateFor(user);
 });
@@ -463,8 +485,7 @@ route('POST', '/api/admin/categories/auto-advance', ({ user }) => {
 route('POST', '/api/admin/categories/:id', ({ user, params, body }) => {
   const cat = db.categories.find((c) => c.id === params.id) || fail(404, 'Kategoriaa ei löydy.');
   if ('advanced' in body && !cat.fixed) cat.advanced = !!body.advanced;
-  if ('name' in body) { const n = clean(body.name, 60); if (n.length >= 3) cat.name = n; }
-  if ('description' in body) cat.description = clean(body.description, 160);
+  applyCategoryEdit(cat, body);
   writeDb();
   return stateFor(user);
 }, { admin: true });
@@ -488,8 +509,7 @@ route('POST', '/api/admin/nominees/:id', ({ user, params, body }) => {
     nom.finalist = !!body.finalist;
     if (!nom.finalist) for (const fv of Object.values(db.finalVotes)) if (fv[nom.categoryId] === nom.id) delete fv[nom.categoryId];
   }
-  if ('name' in body) { const n = clean(body.name, 60); if (n.length >= 2) nom.name = n; }
-  if ('reason' in body) nom.reason = clean(body.reason, 160);
+  if ('name' in body || 'reason' in body) applyNomineeEdit(nom, body);
   writeDb();
   return stateFor(user);
 }, { admin: true });
@@ -505,6 +525,27 @@ route('DELETE', '/api/admin/nominees/:id', ({ user, params }) => {
 
 function requireVoter(user) {
   if (user.root) fail(403, 'Ylläpitotunnuksella ei voi ehdottaa eikä äänestää. Kirjaudu omalla henkilökohtaisella koodillasi.');
+}
+
+// Muokkaukset: samat säännöt kuin uutta ehdotusta tehdessä (pituus, ei kaksoiskappaleita)
+function applyCategoryEdit(cat, body) {
+  if ('name' in body) {
+    const name = clean(body.name, 60);
+    if (name.length < 3) fail(400, 'Kategorian nimi on liian lyhyt.');
+    if (db.categories.some((c) => c.id !== cat.id && norm(c.name) === norm(name))) fail(409, 'Samanniminen kategoria on jo olemassa.');
+    cat.name = name;
+  }
+  if ('description' in body) cat.description = clean(body.description, 160);
+}
+
+function applyNomineeEdit(nom, body) {
+  const name = 'name' in body ? clean(body.name, 60) : nom.name;
+  const reason = 'reason' in body ? clean(body.reason, 160) : nom.reason;
+  if (name.length < 2) fail(400, 'Kirjoita ehdokkaan nimi.');
+  if (reason.length < 3) fail(400, 'Kirjoita myös mistä ehdotat.');
+  if (db.nominees.some((n) => n.id !== nom.id && n.categoryId === nom.categoryId && norm(n.name) === norm(name) && norm(n.reason) === norm(reason))) fail(409, 'Sama ehdotus on jo listalla.');
+  nom.name = name;
+  nom.reason = reason;
 }
 
 // Lukitus tallennetaan käyttäjälle vaihekohtaisesti: user.locked = { "1": aikaleima, ... }

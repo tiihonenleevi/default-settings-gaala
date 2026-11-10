@@ -3,6 +3,9 @@
 
 let state = null;
 let showFinalCounts = false;
+// Muokattavana oleva kohde: { kind: 'cat' | 'nom', id, admin } tai null.
+// Säilyy uudelleenpiirroissa (myös 15 s automaattipäivityksessä), joten keskeneräinen muokkaus ei katoa.
+let editing = null;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -255,12 +258,14 @@ function phaseProposals() {
     </form>
     <header class="cat-head"><p class="eyebrow">Ehdotetut kategoriat · ${cats.length}</p></header>
     <div class="list">
-      ${cats.map((c) => `
+      ${cats.map((c) => isEditing('cat', c.id, false) ? `
+      <div class="item is-voted is-editing">${editForm('cat', c, false)}</div>` : `
       <div class="item ${c.mine ? 'is-voted' : ''}">
         <div>
           <div class="title">${esc(c.name)} ${c.fixed ? '<span class="tag tag--gold">Mukana aina</span>' : ''} ${c.mine ? '<span class="tag">Sinun ehdotuksesi</span>' : ''}</div>
           ${c.description ? `<p>${esc(c.description)}</p>` : ''}
         </div>
+        ${c.mine ? editButton('cat', c.id, false) : ''}
       </div>`).join('')}
       ${cats.length <= 1 ? '<div class="empty">Ei vielä muita ehdotuksia. Ehdota ensimmäinen kategoria yllä.</div>' : ''}
     </div>
@@ -288,6 +293,24 @@ function phaseCategoryVote() {
   </section>`;
 }
 
+// ---------- Muokkaus ----------
+const isEditing = (kind, id, admin) => !!(editing && editing.kind === kind && editing.id === id && !!editing.admin === !!admin);
+
+function editButton(kind, id, admin, label = 'Muokkaa') {
+  return `<button class="btn btn--ghost" type="button" data-act="edit" data-kind="${kind}" data-id="${id}" data-admin="${admin ? 1 : ''}">${label}</button>`;
+}
+
+function editForm(kind, item, admin) {
+  const cat = kind === 'cat';
+  const k = `${kind}-${item.id}`;
+  return `
+  <form class="edit-form" data-form="edit" data-kind="${kind}" data-id="${item.id}" data-admin="${admin ? 1 : ''}">
+    <div class="field"><label for="e1-${k}">${cat ? 'Kategorian nimi' : 'Ehdokas'}</label><input class="input" id="e1-${k}" data-keep maxlength="60" required value="${esc(item.name)}"></div>
+    <div class="field"><label for="e2-${k}">${cat ? 'Kuvaus (valinnainen)' : 'Mistä?'}</label><input class="input" id="e2-${k}" data-keep maxlength="160" ${cat ? '' : 'required'} value="${esc(cat ? item.description : item.reason)}"></div>
+    <div class="edit-actions"><button class="btn btn--primary btn--sm" type="submit">Tallenna</button><button class="btn btn--ghost" type="button" data-act="edit-cancel">Peruuta</button></div>
+  </form>`;
+}
+
 function initial(name) {
   const ch = [...String(name).trim()][0] || '?';
   return ch.toLocaleUpperCase('fi');
@@ -311,11 +334,12 @@ function phaseNominees() {
         ${noms.map((n) => `
         <article class="nom-card ${n.myVote ? 'is-voted' : ''}">
           <div class="nom-mono" aria-hidden="true"><span>${esc(initial(n.name))}</span>${n.mine ? '<span class="tag nom-tag">Sinun ehdotuksesi</span>' : ''}</div>
-          <div class="nom-body">
+          ${isEditing('nom', n.id, false) ? `<div class="nom-body">${editForm('nom', n, false)}</div>` : `<div class="nom-body">
             <h3 class="h3">${esc(n.name)}</h3>
             <p>${esc(n.reason)}</p>
+            ${n.mine ? `<div>${editButton('nom', n.id, false)}</div>` : ''}
           </div>
-          <button class="btn btn--sm ${n.myVote ? 'btn--voted' : 'btn--secondary'}" data-act="vote-nom" data-id="${n.id}" aria-pressed="${n.myVote}" ${!n.myVote && full ? 'disabled title="Kategorian äänet käytetty"' : ''}>${n.myVote ? 'Äänestetty' : 'Äänestä'}</button>
+          <button class="btn btn--sm ${n.myVote ? 'btn--voted' : 'btn--secondary'}" data-act="vote-nom" data-id="${n.id}" aria-pressed="${n.myVote}" ${!n.myVote && full ? 'disabled title="Kategorian äänet käytetty"' : ''}>${n.myVote ? 'Äänestetty' : 'Äänestä'}</button>`}
         </article>`).join('')}
       </div>` : '<div class="empty">Ei vielä ehdokkaita. Ehdota ensimmäinen alla.</div>'}
       <form class="panel" data-form="nom" data-cat="${c.id}">
@@ -401,10 +425,10 @@ function adminView() {
         <tbody>${[...a.categories].sort((x, y) => (y.fixed - x.fixed) || (y.votes - x.votes)).map((c) => `
           <tr>
             <td><label class="check"><input type="checkbox" data-act="advance" data-id="${c.id}" ${c.advanced ? 'checked' : ''} ${c.fixed ? 'disabled' : ''}><span class="small muted">${c.fixed ? 'aina' : ''}</span></label></td>
-            <td><b style="font-weight:500">${esc(c.name)}</b>${c.description ? `<div class="small muted">${esc(c.description)}</div>` : ''}</td>
+            <td>${isEditing('cat', c.id, true) ? editForm('cat', c, true) : `<b style="font-weight:500">${esc(c.name)}</b>${c.description ? `<div class="small muted">${esc(c.description)}</div>` : ''}`}</td>
             <td style="width:30%">${c.fixed ? '<span class="small muted">kiinteä</span>' : `<div class="bar"><i style="width:${(c.votes / maxCat) * 100}%"></i></div>`}</td>
             <td class="num">${c.fixed ? '' : c.votes}</td>
-            <td class="act">${c.fixed ? '' : `<button class="btn btn--ghost" data-act="del-cat" data-id="${c.id}" aria-label="Poista ${esc(c.name)}">Poista</button>`}</td>
+            <td class="act">${isEditing('cat', c.id, true) ? '' : editButton('cat', c.id, true)}${c.fixed || isEditing('cat', c.id, true) ? '' : `<button class="btn btn--ghost" data-act="del-cat" data-id="${c.id}" aria-label="Poista ${esc(c.name)}">Poista</button>`}</td>
           </tr>`).join('')}</tbody>
       </table></div>
     </div>
@@ -424,11 +448,11 @@ function adminView() {
           <tbody>${noms.map((n) => `
             <tr>
               <td style="width:1%"><input type="checkbox" class="check" style="width:18px;height:18px;accent-color:var(--gold)" data-act="finalist" data-id="${n.id}" ${n.finalist ? 'checked' : ''} aria-label="Finalisti: ${esc(n.name)}"></td>
-              <td><b style="font-weight:500">${esc(n.name)}</b>${n.reason ? `<div class="small muted">${esc(n.reason)}</div>` : ''}</td>
+              <td>${isEditing('nom', n.id, true) ? editForm('nom', n, true) : `<b style="font-weight:500">${esc(n.name)}</b>${n.reason ? `<div class="small muted">${esc(n.reason)}</div>` : ''}`}</td>
               <td style="width:25%"><div class="bar"><i style="width:${(n.votes / max) * 100}%"></i></div></td>
               <td class="num">${n.votes}</td>
               ${s.phase >= 4 && showFinalCounts ? `<td class="num" style="color:var(--gold-text)">${n.finalist ? n.finalVotes + ' fin.' : ''}</td>` : ''}
-              <td class="act"><button class="btn btn--ghost" data-act="del-nom" data-id="${n.id}" aria-label="Poista ${esc(n.name)}">Poista</button></td>
+              <td class="act">${isEditing('nom', n.id, true) ? '' : `${editButton('nom', n.id, true)}<button class="btn btn--ghost" data-act="del-nom" data-id="${n.id}" aria-label="Poista ${esc(n.name)}">Poista</button>`}</td>
             </tr>`).join('') || `<tr><td colspan="6" class="muted">Ei ehdokkaita.</td></tr>`}</tbody>
         </table></div>`;
       }).join('')}
@@ -530,6 +554,14 @@ document.addEventListener('click', async (e) => {
     case 'user-unlock':
       if (confirm(`Avataanko lukko (${t.dataset.name})? Hän voi taas muuttaa tämän vaiheen valintojaan.`)) await api('POST', `/api/admin/users/${id}`, { unlock: true }).then(() => toast('Lukko avattu.')).catch(() => {});
       break;
+    case 'edit': {
+      editing = { kind: t.dataset.kind, id, admin: !!t.dataset.admin };
+      render();
+      const first = document.getElementById(`e1-${t.dataset.kind}-${id}`);
+      if (first) { first.focus(); first.select(); }
+      break;
+    }
+    case 'edit-cancel': editing = null; render(); break;
     case 'auto-advance': await api('POST', '/api/admin/categories/auto-advance', {}).catch(() => {}); break;
     case 'user-regen': if (confirm('Luodaanko uusi koodi? Vanha lakkaa toimimasta heti.')) await api('POST', `/api/admin/users/${id}`, { regenerate: true }).catch(() => {}); break;
     case 'user-del': if (confirm('Poistetaanko osallistuja ja hänen äänensä? Hänen ehdotuksensa jäävät.')) await api('DELETE', `/api/admin/users/${id}`, {}).catch(() => {}); break;
@@ -588,6 +620,13 @@ document.addEventListener('submit', async (e) => {
         if (n) n.value = name; if (r) r.value = reason; throw err;
       });
       toast('Ehdokas lisätty.');
+    } else if (f.dataset.form === 'edit') {
+      const { kind, id } = f.dataset; const admin = !!f.dataset.admin; const k = `${kind}-${id}`;
+      const body = kind === 'cat' ? { name: v('e1-' + k), description: v('e2-' + k) } : { name: v('e1-' + k), reason: v('e2-' + k) };
+      const base = kind === 'cat' ? 'categories' : 'nominees';
+      await api('POST', admin ? `/api/admin/${base}/${id}` : `/api/${base}/${id}/edit`, body);
+      editing = null; render();
+      toast('Muutokset tallennettu.');
     } else if (f.id === 'settings-form') {
       await api('POST', '/api/admin/settings', { deadline: v('s-deadline'), targetCategories: v('s-tc'), catVotes: v('s-cv'), votesP2: v('s-v2'), maxCategoryProposals: v('s-mc'), maxNomineeProposals: v('s-mn') });
       toast('Asetukset tallennettu.');

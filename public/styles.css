@@ -40,6 +40,7 @@ body {
   min-height: 100vh;
   color: var(--ink);
   font: 400 16px/1.6 var(--font-sans);
+  font-variant-numeric: lining-nums; /* serif-otsikoissa 0 ei näytä o-kirjaimelta */
   -webkit-font-smoothing: antialiased;
 }
 /* Valokeilat: kultainen ylhäältä, viininpunaista reunoilta. Kiinteä kerros, ei liiku vierittäessä. */
@@ -412,3 +413,12 @@ textarea.input { resize: vertical; min-height: 72px; }
 @media (max-width: 520px) { .lock-summary > div { grid-template-columns: 1fr; } .lock-panel { padding: 32px 20px; } }
 @media (max-width: 520px) { .stepper li b { font-size: 11px; letter-spacing: 0; } .stepper li::before { width: 34px; height: 34px; font-size: 14px; } .stepper li::after { top: 17px; left: calc(50% + 21px); right: calc(-50% + 21px); } }
 .lock-panel .h1 { max-width: 18ch; text-align: center; }
+
+/* ---------- Muokkaus ---------- */
+.edit-form { display: grid; gap: 12px; min-width: 0; width: 100%; }
+.edit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.item.is-editing { grid-template-columns: 1fr; }
+.nom-body .edit-form .input { min-height: 42px; }
+.nom-body .btn--ghost { margin-left: -10px; }
+td .edit-form { padding-block: 4px; }
+@media (max-width: 640px) { .table-wrap td:has(> .edit-form) { grid-column: 2 / -1; } }
