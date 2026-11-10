@@ -37,6 +37,7 @@ function emptyDb() {
       phase: 1,
       deadline: '',
       nextStart: '', // milloin seuraava vaihe alkaa (näkyy odotusnäytöllä); tyhjenee vaiheen vaihtuessa
+      phaseEnds: {}, // vaiheiden 1–4 päättymisajat muodossa "2026-12-04T20:00" (näkyvät vaihepalkissa)
       targetCategories: 8, // kategorioita gaalassa (sis. kiinteät); äänestyksellä valitaan tämä − kiinteät
       catVotes: 3, // ääniä per henkilö kategoria-äänestyksessä (vaihe 2)
       votesP2: 2, // ääniä per kategoria ehdokasvaiheessa (vaihe 3; oma ehdotus vie yhden)
@@ -272,6 +273,7 @@ function stateFor(user) {
     phaseName: PHASES[s.phase],
     deadline: s.deadline,
     nextStart: s.nextStart || '',
+    phaseEnds: s.phaseEnds || {},
     limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, votesP2: s.votesP2, finalists: s.finalists, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
     me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, locked: isLocked(user) } : null,
   };
@@ -563,7 +565,7 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
   db.categories = db.categories.filter((c) => c.fixed).map((c) => ({ ...c, advanced: true }));
   db.catVotes = []; db.nominees = []; db.nomVotes = [];
   db.finalVotes = {}; db.finalVoteAt = {}; db.feedback = [];
-  db.settings.phase = 1; db.settings.deadline = ''; db.settings.nextStart = '';
+  db.settings.phase = 1; db.settings.deadline = ''; db.settings.nextStart = ''; db.settings.phaseEnds = {};
   for (const u of Object.values(db.users)) u.locked = {};
   if (body.users) for (const u of Object.values(db.users)) if (!u.root) delete db.users[u.id];
   writeDb();
@@ -699,6 +701,16 @@ route('POST', '/api/admin/settings', ({ user, body }) => {
   const s = db.settings;
   if ('deadline' in body) s.deadline = clean(body.deadline, 80);
   if ('nextStart' in body) s.nextStart = clean(body.nextStart, 80);
+  if (body.phaseEnds && typeof body.phaseEnds === 'object') {
+    const ends = {};
+    for (const p of [1, 2, 3, 4]) {
+      const v = String(body.phaseEnds[p] ?? '').trim();
+      if (!v) continue;
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v) || Number.isNaN(Date.parse(v))) fail(400, `Vaiheen ${p} päättymisaika on virheellinen.`);
+      ends[p] = v;
+    }
+    s.phaseEnds = ends;
+  }
   for (const k of ['targetCategories', 'catVotes', 'votesP2', 'maxCategoryProposals', 'maxNomineeProposals', 'finalists']) {
     if (k in body) {
       const n = Math.round(Number(body[k]));

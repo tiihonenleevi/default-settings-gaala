@@ -115,7 +115,10 @@ function stepper() {
   const names = ['Ehdotukset', 'Kategoriat', 'Ehdokkaat', 'Finaali', 'Suljettu'];
   return `<ol class="stepper">${names.map((n, i) => {
     const p = i + 1; const cls = p < state.phase ? 'done' : p === state.phase ? 'now' : '';
-    return `<li class="${cls}" ${p === state.phase ? 'aria-current="step"' : ''}>${p < 5 ? 'Vaihe ' + p : 'Lopuksi'}<b>${n}</b></li>`;
+    const end = p < 5 && state.phaseEnds && state.phaseEnds[p];
+    // Päättymisaika näkyy vaiheiden välisellä viivalla (puhelimessa nimen alla)
+    const endTxt = end ? `<span class="step-end">${p < state.phase ? 'päättyi' : 'päättyy'} <time datetime="${esc(end)}">${fmtEndParts(end)}</time></span>` : '';
+    return `<li class="${cls}${end ? ' has-end' : ''}" ${p === state.phase ? 'aria-current="step"' : ''}>${p < 5 ? 'Vaihe ' + p : 'Lopuksi'}<b>${n}</b>${endTxt}</li>`;
   }).join('')}</ol>`;
 }
 
@@ -123,8 +126,26 @@ function pips(used, total) {
   return `<span class="pips" aria-hidden="true">${Array.from({ length: total }, (_, i) => `<i class="${i < used ? 'on' : ''}"></i>`).join('')}</span>`;
 }
 
+// Päättymisaika muodossa "pe 4.12. klo 20.00"
+function fmtEnd(v) {
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return v;
+  return d.toLocaleString('fi-FI', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// Vaihepalkkiin päivä ja kellonaika erikseen, jotta ne mahtuvat puhelimessa omille riveilleen
+function fmtEndParts(v) {
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return esc(v);
+  const date = d.toLocaleDateString('fi-FI', { weekday: 'short', day: 'numeric', month: 'numeric' });
+  const time = d.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+  return `<span>${esc(date)}</span> <span>klo ${esc(time)}</span>`;
+}
+
 function deadline() {
-  return state.deadline ? `<span class="small muted">Vaihe päättyy: <b style="color:var(--ink);font-weight:500">${esc(state.deadline)}</b></span>` : '';
+  const end = state.phaseEnds && state.phaseEnds[state.phase];
+  const txt = end ? fmtEnd(end) : state.deadline; // vanha vapaatekstikenttä varalla
+  return txt ? `<span class="small muted">Vaihe päättyy: <b style="color:var(--ink);font-weight:500">${esc(txt)}</b></span>` : '';
 }
 
 function phaseHero() {
@@ -458,7 +479,7 @@ function adminView() {
     <form class="panel" id="settings-form">
       <p class="eyebrow">Asetukset</p>
       <div class="admin-grid">
-        <div class="field"><label for="s-deadline">Vaihe päättyy (näkyy kaikille)</label><input class="input" id="s-deadline" value="${esc(s.deadline)}" placeholder="pe 4.12. klo 20"></div>
+        ${[['Ehdotukset', 1], ['Kategoria-äänestys', 2], ['Ehdokkaat', 3], ['Finaali', 4]].map(([n, p]) => `<div class="field"><label for="s-end${p}">Vaihe ${p} (${n}) päättyy</label><input class="input" id="s-end${p}" type="datetime-local" value="${esc((s.phaseEnds || {})[p] || '')}"></div>`).join('')}
         <div class="field"><label for="s-next">Seuraava vaihe alkaa (näkyy odotusnäytöllä)</label><input class="input" id="s-next" value="${esc(s.nextStart)}" placeholder="la 5.12. klo 18"><span class="small muted">Tyhjenee, kun vaihe vaihtuu</span></div>
         <div class="field"><label for="s-tc">Kategorioita gaalassa (sis. kiinteän)</label><input class="input" id="s-tc" type="number" min="2" max="50" value="${L.targetCategories}"><span class="small muted">→ äänestyksellä valitaan ${L.advanceCount}</span></div>
         <div class="field"><label for="s-cv">Ääniä / hlö kategoria-äänestyksessä</label><input class="input" id="s-cv" type="number" min="1" max="50" value="${L.catVotes}"></div>
@@ -1035,7 +1056,7 @@ document.addEventListener('submit', async (e) => {
       await api('POST', '/api/feedback', { text });
       clear('fb-text');
     } else if (f.id === 'settings-form') {
-      await api('POST', '/api/admin/settings', { deadline: v('s-deadline'), nextStart: v('s-next'), targetCategories: v('s-tc'), catVotes: v('s-cv'), votesP2: v('s-v2'), maxCategoryProposals: v('s-mc'), maxNomineeProposals: v('s-mn'), finalists: v('s-fi') });
+      await api('POST', '/api/admin/settings', { deadline: '', phaseEnds: { 1: v('s-end1'), 2: v('s-end2'), 3: v('s-end3'), 4: v('s-end4') }, nextStart: v('s-next'), targetCategories: v('s-tc'), catVotes: v('s-cv'), votesP2: v('s-v2'), maxCategoryProposals: v('s-mc'), maxNomineeProposals: v('s-mn'), finalists: v('s-fi') });
       toast('Asetukset tallennettu.');
     }
   } catch { /* virhe näytetty toastina */ }
