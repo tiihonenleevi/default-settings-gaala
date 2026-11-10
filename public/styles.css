@@ -637,3 +637,9 @@ td.fb-text { white-space: normal; overflow-wrap: anywhere; min-width: 200px; }
 .danger-panel .eyebrow { color: var(--danger-text); }
 .btn--danger { background: linear-gradient(180deg, #9d2629, var(--red)); color: #fff; border-color: transparent; }
 .btn--danger:hover { filter: brightness(1.12); }
+
+/* ---------- Odotusnäytön aika ja kuvien raahaus ---------- */
+.next-start { margin: 0; font-size: 17px; color: var(--ink); }
+.next-start b { display: block; margin-top: 4px; font: 600 30px/1.15 var(--font-display); color: var(--gold-light); }
+tr.drop-hover { outline: 2px dashed var(--gold); outline-offset: -2px; background: rgba(210, 175, 87, 0.1) !important; }
+@media (max-width: 640px) { tr.drop-hover { border-radius: var(--radius-md); } }

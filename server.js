@@ -36,6 +36,7 @@ function emptyDb() {
     settings: {
       phase: 1,
       deadline: '',
+      nextStart: '', // milloin seuraava vaihe alkaa (näkyy odotusnäytöllä); tyhjenee vaiheen vaihtuessa
       targetCategories: 8, // kategorioita gaalassa (sis. kiinteät); äänestyksellä valitaan tämä − kiinteät
       catVotes: 3, // ääniä per henkilö kategoria-äänestyksessä (vaihe 2)
       votesP2: 2, // ääniä per kategoria ehdokasvaiheessa (vaihe 3; oma ehdotus vie yhden)
@@ -270,6 +271,7 @@ function stateFor(user) {
     phase: s.phase,
     phaseName: PHASES[s.phase],
     deadline: s.deadline,
+    nextStart: s.nextStart || '',
     limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, votesP2: s.votesP2, finalists: s.finalists, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
     me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, locked: isLocked(user) } : null,
   };
@@ -561,7 +563,7 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
   db.categories = db.categories.filter((c) => c.fixed).map((c) => ({ ...c, advanced: true }));
   db.catVotes = []; db.nominees = []; db.nomVotes = [];
   db.finalVotes = {}; db.finalVoteAt = {}; db.feedback = [];
-  db.settings.phase = 1; db.settings.deadline = '';
+  db.settings.phase = 1; db.settings.deadline = ''; db.settings.nextStart = '';
   for (const u of Object.values(db.users)) u.locked = {};
   if (body.users) for (const u of Object.values(db.users)) if (!u.root) delete db.users[u.id];
   writeDb();
@@ -599,6 +601,14 @@ route('POST', '/api/admin/users/:id', ({ user, params, body }) => {
   if ('nominable' in body) u.nominable = !!body.nominable;
   writeDb();
   return stateFor(user);
+}, { admin: true });
+
+// Kuvan latauksen vianetsintä: selain kertoo jokaisesta latausyrityksestä, ja tieto kirjoitetaan palvelimen
+// lokiin (docker logs gaala | grep kuvalataus). Ei tallenneta tietokantaan.
+route('POST', '/api/admin/upload-log', ({ user, body }) => {
+  const f = (k, n = 120) => clean(body[k], n);
+  console.log(`[kuvalataus] ${now()} ${user.name}: ${f('result', 20)} | vaihe: ${f('stage', 40)} | tiedosto: "${f('name', 80)}" ${f('type', 40) || '(ei tyyppiä)'} ${Number(body.size) || 0} t | mitat: ${f('dims', 30) || '-'} | virhe: ${f('error', 300) || '-'} | selain: ${f('ua', 200)}`);
+  return { ok: true };
 }, { admin: true });
 
 // Osallistujan (henkilön) kuva: näkyy kaikissa hänen ehdokaskorteissaan, ellei kortilla ole omaa kuvaa
@@ -679,6 +689,7 @@ route('POST', '/api/admin/phase', ({ user, body }) => {
     const missing = advancedCats().filter((c) => !db.nominees.some((n) => n.categoryId === c.id && n.finalist));
     if (missing.length) fail(400, `Valitse finalistit myös näihin: ${missing.map((c) => c.name).join(', ')}.`);
   }
+  if (db.settings.phase !== phase) db.settings.nextStart = ''; // vanha "seuraava vaihe alkaa" -aika ei enää päde
   db.settings.phase = phase;
   writeDb();
   return stateFor(user);
@@ -687,6 +698,7 @@ route('POST', '/api/admin/phase', ({ user, body }) => {
 route('POST', '/api/admin/settings', ({ user, body }) => {
   const s = db.settings;
   if ('deadline' in body) s.deadline = clean(body.deadline, 80);
+  if ('nextStart' in body) s.nextStart = clean(body.nextStart, 80);
   for (const k of ['targetCategories', 'catVotes', 'votesP2', 'maxCategoryProposals', 'maxNomineeProposals', 'finalists']) {
     if (k in body) {
       const n = Math.round(Number(body[k]));

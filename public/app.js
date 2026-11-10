@@ -236,12 +236,14 @@ function waitingView() {
     });
   }
   const last = s.phase === 4;
+  const when = s.nextStart ? `<p class="next-start">${last ? 'Tulokset julkistetaan' : 'Seuraava vaihe alkaa'} <b>${esc(s.nextStart)}</b></p>` : '';
   return `
   <section class="section screen-center">
     <div class="panel lock-panel is-locked">
       <img class="lock-trophy" src="/logo.svg" alt="" width="108" height="236">
       <p class="eyebrow">Lukko sisään · vaihe ${s.phase} / 4</p>
       <h1 class="h1">${last ? 'Äänesi on lukittu' : 'Seuraava vaihe ei ole vielä alkanut'}</h1>
+      ${when}
       <p class="muted" style="margin:0;max-width:52ch">${last ? 'Kiitos äänistä! Voittajat julkistetaan gaalassa.' : 'Olet jo vastannut tähän vaiheeseen. Odota, että järjestäjät avaavat seuraavan vaiheen – sivu päivittyy itsestään.'}</p>
       <dl class="lock-summary">${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
       <p class="small muted" style="margin:0">Haluatko muuttaa jotain? Pyydä järjestäjää avaamaan lukko.</p>
@@ -457,6 +459,7 @@ function adminView() {
       <p class="eyebrow">Asetukset</p>
       <div class="admin-grid">
         <div class="field"><label for="s-deadline">Vaihe päättyy (näkyy kaikille)</label><input class="input" id="s-deadline" value="${esc(s.deadline)}" placeholder="pe 4.12. klo 20"></div>
+        <div class="field"><label for="s-next">Seuraava vaihe alkaa (näkyy odotusnäytöllä)</label><input class="input" id="s-next" value="${esc(s.nextStart)}" placeholder="la 5.12. klo 18"><span class="small muted">Tyhjenee, kun vaihe vaihtuu</span></div>
         <div class="field"><label for="s-tc">Kategorioita gaalassa (sis. kiinteän)</label><input class="input" id="s-tc" type="number" min="2" max="50" value="${L.targetCategories}"><span class="small muted">→ äänestyksellä valitaan ${L.advanceCount}</span></div>
         <div class="field"><label for="s-cv">Ääniä / hlö kategoria-äänestyksessä</label><input class="input" id="s-cv" type="number" min="1" max="50" value="${L.catVotes}"></div>
         <div class="field"><label for="s-v2">Ääniä / kategoria ehdokasvaiheessa</label><input class="input" id="s-v2" type="number" min="1" max="50" value="${L.votesP2}"></div>
@@ -499,7 +502,7 @@ function adminView() {
         return `<div class="table-wrap"><table>
           <thead><tr><th colspan="${s.phase >= 4 && showFinalCounts ? 6 : 5}">${esc(c.name)} · ${fin} finalistia</th></tr></thead>
           <tbody>${noms.map((n) => `
-            <tr>
+            <tr data-drop-target="nom" data-drop-id="${n.id}">
               <td style="width:1%"><input type="checkbox" class="check" style="width:18px;height:18px;accent-color:var(--gold)" data-act="finalist" data-id="${n.id}" ${n.finalist ? 'checked' : ''} aria-label="Finalisti: ${esc(n.name)}"></td>
               <td>${isEditing('nom', n.id, true) ? editForm('nom', n, true) : `<div class="adm-entry">${portrait(n, 'thumb')}<div><b style="font-weight:500">${esc(n.name)}</b>${n.reason ? `<div class="small muted">${esc(n.reason)}</div>` : ''}<div class="by">Ehdottaja: ${esc(n.byName || 'poistettu osallistuja')}</div>
                 <div class="photo-actions">${photoButton('nom', n.id, n.ownPhoto ? 'Vaihda kortin kuva' : 'Kortin oma kuva')}${n.photo ? `<button class="btn btn--ghost" data-act="crop-open" data-target="nom" data-id="${n.id}">Rajaa ja esikatsele</button>` : ''}${n.ownPhoto ? `<button class="btn btn--ghost" data-act="photo-del" data-target="nom" data-id="${n.id}">Poista kortin kuva</button>` : ''}</div></div></div>`}</td>
@@ -546,7 +549,7 @@ function participantsView() {
     ${a.participants.length ? `<div class="table-wrap"><table>
       <thead><tr><th>Nimi</th><th>Koodi</th><th>${ph >= 4 ? 'Finaali' : 'Vaihe ' + ph} · käytetty</th><th>Ehdokkaana</th><th>Admin</th><th></th></tr></thead>
       <tbody>${a.participants.map((p) => `
-        <tr>
+        <tr data-drop-target="user" data-drop-id="${p.id}">
           <td><div class="adm-entry">${portrait(p, 'thumb')}<div><b style="font-weight:500">${esc(p.name)}</b>${p.joined ? '' : '<div class="small muted">Ei vielä kirjautunut</div>'}
             <div class="photo-actions">${photoButton('user', p.id, p.photo ? 'Vaihda kuva' : 'Lisää kuva')}${p.photo ? `<button class="btn btn--ghost" data-act="crop-open" data-target="user" data-id="${p.id}">Rajaa</button><button class="btn btn--ghost" data-act="photo-del" data-target="user" data-id="${p.id}">Poista kuva</button>` : ''}</div></div></div></td>
           <td><code class="code">${esc(p.code)}</code></td>
@@ -562,7 +565,7 @@ function participantsView() {
           </td>
         </tr>`).join('')}</tbody>
     </table></div>
-    <p class="small muted" style="margin:0">Linkki kirjaa kaverin sisään suoraan. "Uusi koodi" mitätöi vanhan koodin ja kirjaa kaverin ulos kaikilta laitteilta. Osallistujan kuva näkyy hänen henkilö- ja ehdokaskorteissaan; yksittäiselle ehdokaskortille voi vaihtaa oman kuvan ehdokastaulukosta.</p>` : '<div class="empty">Ei vielä osallistujia. Lisää kaverien nimet yllä, niin jokainen saa oman koodin.</div>'}
+    <p class="small muted" style="margin:0">Linkki kirjaa kaverin sisään suoraan. "Uusi koodi" mitätöi vanhan koodin ja kirjaa kaverin ulos kaikilta laitteilta. Osallistujan kuva näkyy hänen henkilö- ja ehdokaskorteissaan; yksittäiselle ehdokaskortille voi vaihtaa oman kuvan ehdokastaulukosta. Tietokoneella kuvan voi myös raahata suoraan riville.</p>` : '<div class="empty">Ei vielä osallistujia. Lisää kaverien nimet yllä, niin jokainen saa oman koodin.</div>'}
   </div>`;
 }
 
@@ -891,17 +894,54 @@ photoInput.className = 'sr-only';
 photoInput.tabIndex = -1;
 photoInput.setAttribute('aria-hidden', 'true');
 document.body.appendChild(photoInput);
-photoInput.addEventListener('change', async () => {
+photoInput.addEventListener('change', () => {
   const file = photoInput.files && photoInput.files[0];
   const tgt = uploadTarget;
   photoInput.value = ''; // sama kuva voidaan valita uudelleen
-  if (!file || !tgt) return;
+  if (!file || !tgt) { uploadLog({ result: 'peruttu', stage: 'valinta', error: file ? 'kohde puuttui' : 'ei tiedostoa' }); return; }
+  uploadPhoto(tgt, file, 'valinta');
+});
+
+// Kirjaa latausyritys palvelimen lokiin vianetsintää varten (ei vaikuta itse lataukseen)
+function uploadLog(info) {
+  fetch('/api/admin/upload-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ ...info, ua: navigator.userAgent }) }).catch(() => {});
+}
+
+// Yhteinen lataus napille ja raahaukselle: luku → (HEIC-muunnos) → pienennys → lähetys → rajausikkuna
+async function uploadPhoto(tgt, file, via) {
+  const meta = { name: file.name, type: file.type, size: file.size };
+  let stage = 'luku';
   try {
     toast('Ladataan kuvaa…');
-    const image = await imageToDataUrl(file);
+    const image = await imageToDataUrl(file, 1400, (d) => { meta.dims = d; });
+    stage = 'lähetys';
     await api('POST', `/api/admin/${tgt.target === 'user' ? 'users' : 'nominees'}/${tgt.id}/photo`, { image });
+    uploadLog({ ...meta, result: 'onnistui', stage: via });
     openCrop(tgt.target, tgt.id); // heti rajaukseen ja esikatseluun
-  } catch (err) { if (err && err.message) toast(err.message, true); }
+  } catch (err) {
+    uploadLog({ ...meta, result: 'virhe', stage: `${via}/${stage}`, error: err && err.message });
+    if (err && err.message && stage === 'luku') toast(err.message, true); // lähetysvirheen api() näytti jo
+  }
+}
+
+// Raahaa ja pudota: kuvan voi pudottaa osallistujan tai ehdokkaan riville hallinnassa
+const dragFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+document.addEventListener('dragover', (e) => {
+  if (!dragFiles(e)) return;
+  e.preventDefault(); // estää selainta avaamasta tiedostoa, jos se pudotetaan ohi
+  const zone = e.target.closest && e.target.closest('[data-drop-target]');
+  document.querySelectorAll('.drop-hover').forEach((el) => { if (el !== zone) el.classList.remove('drop-hover'); });
+  if (zone) { zone.classList.add('drop-hover'); e.dataTransfer.dropEffect = 'copy'; } else e.dataTransfer.dropEffect = 'none';
+});
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.querySelectorAll('.drop-hover').forEach((el) => el.classList.remove('drop-hover')); });
+document.addEventListener('drop', (e) => {
+  if (!dragFiles(e)) return;
+  e.preventDefault();
+  document.querySelectorAll('.drop-hover').forEach((el) => el.classList.remove('drop-hover'));
+  const zone = e.target.closest && e.target.closest('[data-drop-target]');
+  const file = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!zone || !file) { if (file) toast('Pudota kuva osallistujan tai ehdokkaan riville.', true); return; }
+  uploadPhoto({ target: zone.dataset.dropTarget, id: zone.dataset.dropId }, file, 'raahaus');
 });
 
 function loadImage(blob) {
@@ -927,7 +967,7 @@ function loadHeicLib() {
 }
 
 // Pienennä kuva ennen lähetystä: pidempi sivu max 1400 px (riittää zoomaukseen), JPEG-laatu 0,85
-async function imageToDataUrl(file, max = 1400) {
+async function imageToDataUrl(file, max = 1400, onDims = () => {}) {
   let loaded;
   try {
     loaded = await loadImage(file);
@@ -946,6 +986,7 @@ async function imageToDataUrl(file, max = 1400) {
   }
   try {
     const { img } = loaded;
+    onDims(`${img.naturalWidth}x${img.naturalHeight}`);
     const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(img.naturalWidth * scale));
@@ -994,7 +1035,7 @@ document.addEventListener('submit', async (e) => {
       await api('POST', '/api/feedback', { text });
       clear('fb-text');
     } else if (f.id === 'settings-form') {
-      await api('POST', '/api/admin/settings', { deadline: v('s-deadline'), targetCategories: v('s-tc'), catVotes: v('s-cv'), votesP2: v('s-v2'), maxCategoryProposals: v('s-mc'), maxNomineeProposals: v('s-mn'), finalists: v('s-fi') });
+      await api('POST', '/api/admin/settings', { deadline: v('s-deadline'), nextStart: v('s-next'), targetCategories: v('s-tc'), catVotes: v('s-cv'), votesP2: v('s-v2'), maxCategoryProposals: v('s-mc'), maxNomineeProposals: v('s-mn'), finalists: v('s-fi') });
       toast('Asetukset tallennettu.');
     }
   } catch { /* virhe näytetty toastina */ }
