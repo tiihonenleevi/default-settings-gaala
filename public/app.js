@@ -54,7 +54,7 @@ function render() {
 
 // ---------- Kirjautuminen ----------
 function brand() {
-  return `<a class="brand" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Default Settings Gaala</a>`;
+  return `<a class="brand" href="/" aria-label="Default Settings Gaala"><img class="brand-trophy" src="/logo.svg" alt="" width="108" height="236"><span class="brand-text" aria-hidden="true"><span class="brand-eyebrow">Default Settings</span><span class="brand-name">Gaala</span></span></a>`;
 }
 
 function loginView() {

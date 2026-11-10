@@ -85,14 +85,21 @@ a { color: var(--gold-text); }
   -webkit-backdrop-filter: blur(14px) saturate(140%); backdrop-filter: blur(14px) saturate(140%);
   border-bottom: 1px solid rgba(210, 175, 87, 0.16);
 }
-.topbar .wrap { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding-block: 14px; flex-wrap: wrap; }
-.brand { display: flex; align-items: center; gap: 12px; font-weight: 500; letter-spacing: 0.2em; text-transform: uppercase; font-size: 13px; text-decoration: none; color: var(--ink); }
-.brand-mark { display: flex; height: 22px; filter: drop-shadow(0 0 10px rgba(210, 175, 87, 0.35)); }
-.brand-mark i { display: block; height: 100%; }
-.brand-mark i:nth-child(1) { width: 9px; background: var(--gold-dark); }
-.brand-mark i:nth-child(2) { width: 3px; background: var(--gold-light); }
-.brand-mark i:nth-child(3) { width: 9px; background: var(--red); }
-.brand-mark i:nth-child(4) { width: 6px; background: var(--gold); }
+/* Puhelimessa logo ja käyttäjärivi menevät kahdelle riville: ei kiinnitetä, ettei palkki vie ruutua */
+@media (max-width: 520px) { .topbar { position: static; } }
+.topbar .wrap { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding-block: 10px; flex-wrap: wrap; }
+.brand { display: inline-flex; align-items: center; gap: 12px; text-decoration: none; color: var(--ink); }
+/* Virallinen logo: pokaali (logo.svg) + kaksirivinen tekstilogo */
+.brand-trophy { display: block; height: 50px; width: auto; filter: drop-shadow(0 0 12px rgba(210, 175, 87, 0.28)); }
+.brand-text { display: grid; gap: 4px; }
+.brand-eyebrow { font: 500 9px/1 var(--font-sans); letter-spacing: 0.3em; text-transform: uppercase; color: var(--gold); }
+.brand-name { font: 500 29px/0.9 var(--font-sans); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink); }
+.login .brand { gap: 20px; }
+.login .brand-trophy { height: 96px; }
+.login .brand-text { gap: 8px; }
+.login .brand-eyebrow { font-size: 13px; }
+.login .brand-name { font-size: 50px; }
+@media (max-width: 520px) { .login .brand-trophy { height: 72px; } .login .brand-eyebrow { font-size: 11px; } .login .brand-name { font-size: 38px; } }
 .whoami { display: flex; align-items: center; gap: var(--space-2); font-size: 14px; }
 
 /* ---------- Vaiheet: numeroidut mitalit viivan varrella ---------- */
