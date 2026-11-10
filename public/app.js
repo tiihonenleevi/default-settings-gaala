@@ -719,9 +719,9 @@ document.addEventListener('keydown', (e) => {
   if (cropping) { cropping = null; render(); } else if (stats) { stats = null; render(); }
 });
 
-// Kuvan valinta: tiedostokenttä napin sisällä; muutos käsitellään change-tapahtumassa
+// Kuvan valinta: nappi avaa sivun ainoan, pysyvän tiedostokentän (ks. photoInput)
 function photoButton(target, id, label) {
-  return `<label class="btn btn--ghost file-btn">${label}<input type="file" accept="${PHOTO_ACCEPT}" data-act="photo-upload" data-target="${target}" data-id="${id}"></label>`;
+  return `<button class="btn btn--ghost" type="button" data-act="photo-pick" data-target="${target}" data-id="${id}">${label}</button>`;
 }
 
 function results() {
@@ -805,6 +805,10 @@ document.addEventListener('click', async (e) => {
     case 'auto-finalists':
       if (confirm(`Valitaanko jokaiseen kategoriaan ${state.limits.finalists} eniten ääniä saanutta finalistiksi? Nykyiset finalistivalinnat korvataan.`)) await api('POST', '/api/admin/nominees/auto-finalists', {}).catch(() => {});
       break;
+    case 'photo-pick':
+      uploadTarget = { target: t.dataset.target, id };
+      photoInput.click(); // kutsuttava heti klikkauksessa ilman odotuksia, muuten iOS estää valitsimen
+      break;
     case 'crop-open': openCrop(t.dataset.target, id); break;
     case 'user-stats':
       try { stats = await api('GET', `/api/admin/users/${id}/stats`); render(); } catch {}
@@ -863,17 +867,6 @@ document.addEventListener('change', async (e) => {
     case 'advance': await api('POST', `/api/admin/categories/${t.dataset.id}`, { advanced: t.checked }).catch(() => {}); break;
     case 'finalist': await api('POST', `/api/admin/nominees/${t.dataset.id}`, { finalist: t.checked }).catch(() => {}); break;
     case 'toggle-final-counts': showFinalCounts = t.checked; render(); break;
-    case 'photo-upload': {
-      const file = t.files && t.files[0];
-      if (!file) break;
-      try {
-        toast('Ladataan kuvaa…');
-        const image = await imageToDataUrl(file);
-        await api('POST', `/api/admin/${t.dataset.target === 'user' ? 'users' : 'nominees'}/${t.dataset.id}/photo`, { image });
-        openCrop(t.dataset.target, t.dataset.id); // heti rajaukseen ja esikatseluun
-      } catch (err) { if (err && err.message) toast(err.message, true); }
-      break;
-    }
   }
 });
 
@@ -886,6 +879,30 @@ const HEIC_LIB = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.
 // WebKit-selaimille riittää image/*. Muille lisätään .heic/.heif, jotta tiedostovalitsin näyttää ne.
 const APPLE_WEBKIT = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Safari/.test(navigator.userAgent) && !/Chrome|Chromium|Edg|Android/.test(navigator.userAgent));
 const PHOTO_ACCEPT = APPLE_WEBKIT ? 'image/*' : 'image/*,.heic,.heif';
+
+// Yksi pysyvä tiedostokenttä #app-alueen ulkopuolella. Sivu piirretään taustalla uudelleen 15 s välein ja
+// kun välilehti palaa näkyviin (esim. iPhonen kuvavalitsimen sulkeutuessa). Jos kenttä olisi näkymän sisällä,
+// valittu kuva palautuisi jo poistetulle kentälle ja katoaisi. Tätä kenttää uudelleenpiirto ei koske.
+let uploadTarget = null; // { target: 'user' | 'nom', id }
+const photoInput = document.createElement('input');
+photoInput.type = 'file';
+photoInput.accept = PHOTO_ACCEPT;
+photoInput.className = 'sr-only';
+photoInput.tabIndex = -1;
+photoInput.setAttribute('aria-hidden', 'true');
+document.body.appendChild(photoInput);
+photoInput.addEventListener('change', async () => {
+  const file = photoInput.files && photoInput.files[0];
+  const tgt = uploadTarget;
+  photoInput.value = ''; // sama kuva voidaan valita uudelleen
+  if (!file || !tgt) return;
+  try {
+    toast('Ladataan kuvaa…');
+    const image = await imageToDataUrl(file);
+    await api('POST', `/api/admin/${tgt.target === 'user' ? 'users' : 'nominees'}/${tgt.id}/photo`, { image });
+    openCrop(tgt.target, tgt.id); // heti rajaukseen ja esikatseluun
+  } catch (err) { if (err && err.message) toast(err.message, true); }
+});
 
 function loadImage(blob) {
   return new Promise((resolve, reject) => {
