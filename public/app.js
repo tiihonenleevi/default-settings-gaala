@@ -1181,9 +1181,11 @@ document.addEventListener('change', async (e) => {
 });
 
 // ---------- Kuvan luku ja pienennys ----------
-// iPhonen HEIC: kuvakirjastosta valittuna iOS muuntaa kuvan yleensä itse JPEGiksi, mutta Tiedostot-sovelluksesta
-// tai tietokoneelta valittu HEIC tulee sellaisenaan, eikä kaikki selaimet osaa avata sitä. Silloin kuva muunnetaan
-// selaimessa JPEGiksi heic2any-kirjastolla (libheif), joka ladataan vain tarvittaessa (~1,3 Mt).
+// HEIC/HEIF: iPhonen Safari avaa HEIC-kuvat itse, mutta Androidin selaimet (Chrome, Brave, Samsung Internet) ja
+// useimmat tietokoneselaimet eivät. Silloin kuva puretaan selaimessa libheif-kirjastolla. Ensisijaisesti käytetään
+// palvelimelta ladattavaa heic-to-kirjastoa (uusi libheif, osaa myös Samsungin HEIF-kuvat; ~3 Mt, ladataan vain
+// tarvittaessa), varalla vanhaa heic2any-kirjastoa CDN:stä.
+const HEIC_TO_LIB = '/vendor/heic-to.js'; // heic-to 1.6.6 (iife), MIT
 const HEIC_LIB = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
 // Kuvan valitsin. Puhelimissa pelkkä image/*:
 // - Androidissa image/* avaa kuvagallerian/kameran; tiedostopäätteet listassa pakottaisivat tiedostoselaimen.
@@ -1224,7 +1226,9 @@ async function uploadPhoto(tgt, file, via) {
   let stage = 'luku';
   try {
     toast('Ladataan kuvaa…');
-    const image = await imageToDataUrl(file, 1400, (d) => { meta.dims = d; }, (k) => { meta.kind = k; });
+    uploadLog({ ...meta, result: 'valittu', stage: via }); // näkyy lokissa heti, vaikka myöhempi vaihe jumittuisi
+    const image = await imageToDataUrl(file, 1400, (d) => { meta.dims = d; }, (k) => { meta.kind = k; },
+      (step) => { if (step !== 'aloitettu') uploadLog({ ...meta, result: 'vaihe', stage: `${via}/${step}` }); });
     stage = 'lähetys';
     if (tgt.target === 'sugg') {
       if (isTest()) { // testikäyttäjä: kuva näkyy vain omassa selaimessa
@@ -1274,99 +1278,124 @@ function loadImage(blob) {
   });
 }
 
-let heicLib = null;
-function loadHeicLib() {
-  heicLib = heicLib || new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = HEIC_LIB; s.async = true;
-    s.onload = () => (window.heic2any ? resolve(window.heic2any) : reject(new Error('kirjasto')));
-    s.onerror = () => { heicLib = null; s.remove(); reject(new Error('kirjasto')); };
-    document.head.appendChild(s);
-  });
-  return heicLib;
+// Lupaus, joka hylätään, jos se ei valmistu ajassa: mikään vaihe ei saa jäädä jumiin ilman virheilmoitusta
+const withTimeout = (promise, ms, msg) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms))]);
+
+const scriptCache = {};
+function loadScript(src, globalName) {
+  scriptCache[src] = scriptCache[src] || withTimeout(new Promise((resolve, reject) => {
+    if (window[globalName]) return resolve(window[globalName]);
+    const el = document.createElement('script');
+    el.src = src; el.async = true;
+    el.onload = () => (window[globalName] ? resolve(window[globalName]) : reject(new Error('kirjasto ei latautunut')));
+    el.onerror = () => { el.remove(); reject(new Error('kirjaston lataus estettiin')); };
+    document.head.appendChild(el);
+  }), 30000, 'kirjaston lataus aikakatkaistiin').catch((e) => { delete scriptCache[src]; throw e; });
+  return scriptCache[src];
+}
+
+// HEIC → piirrettävä kuva. Palauttaa { source, width, height, done }.
+async function decodeHeic(file, log) {
+  try {
+    const heicTo = await loadScript(HEIC_TO_LIB, 'HeicTo');
+    const bmp = await withTimeout(heicTo({ blob: file, type: 'bitmap' }), 90000, 'HEIC-muunnos kesti liian kauan');
+    return { source: bmp, width: bmp.width, height: bmp.height, done: () => bmp.close && bmp.close() };
+  } catch (err) {
+    log(`heic-to: ${err && (err.message || err)}`);
+  }
+  const heic2any = await loadScript(HEIC_LIB, 'heic2any');
+  const out = await withTimeout(heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 }), 90000, 'HEIC-muunnos kesti liian kauan');
+  const { img, url } = await loadImage(Array.isArray(out) ? out[0] : out);
+  return { source: img, width: img.naturalWidth, height: img.naturalHeight, done: () => URL.revokeObjectURL(url) };
 }
 
 // Tunnista kuvan muoto tiedoston alusta. Puhelimet antavat joskus väärän tai tyhjän tyypin ja nimen
 // (esim. Androidin galleriasovellukset, Google Kuvat, iPhonen Tiedostot), joten luotetaan sisältöön.
+// 'unreadable' = tiedostoa ei voitu lukea lainkaan (esim. pilvessä oleva kuva, jota ei ole ladattu puhelimeen).
 async function sniffImage(file) {
+  let b;
   try {
-    const b = new Uint8Array(await file.slice(0, 16).arrayBuffer());
-    if (b[0] === 0xff && b[1] === 0xd8) return 'jpeg';
-    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'png';
-    if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45) return 'webp';
-    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return 'gif';
-    const box = String.fromCharCode(...b.slice(4, 12));
-    if (box.startsWith('ftyp')) {
-      const brand = box.slice(4);
-      if (/^(heic|heix|heim|heis|hevc|hevx|mif1|msf1)/.test(brand)) return 'heic'; // iPhone, Samsungin HEIF
-      if (/^avi[fs]/.test(brand)) return 'avif';
-    }
-  } catch { /* luku epäonnistui: jatketaan tuntemattomana */ }
+    b = new Uint8Array(await withTimeout(file.slice(0, 16).arrayBuffer(), 15000, 'luku aikakatkaistiin'));
+  } catch {
+    return 'unreadable';
+  }
+  if (!b.length) return 'unreadable';
+  if (b[0] === 0xff && b[1] === 0xd8) return 'jpeg';
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'png';
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45) return 'webp';
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return 'gif';
+  const box = String.fromCharCode(...b.slice(4, 12));
+  if (box.startsWith('ftyp')) {
+    const brand = box.slice(4);
+    if (/^(heic|heix|heim|heis|hevc|hevx|mif1|msf1)/.test(brand)) return 'heic'; // iPhone, Samsungin HEIF
+    if (/^avi[fs]/.test(brand)) return 'avif';
+  }
   return /\.(heic|heif)$/i.test(file.name || '') || /hei[cf]/i.test(file.type || '') ? 'heic' : 'unknown';
 }
 
-const readAsDataUrl = (blob) => new Promise((resolve, reject) => {
+const readAsDataUrl = (blob) => withTimeout(new Promise((resolve, reject) => {
   const r = new FileReader();
   r.onload = () => resolve(String(r.result));
   r.onerror = () => reject(new Error('Kuvan lukeminen epäonnistui.'));
   r.readAsDataURL(blob);
-});
+}), 30000, 'Kuvan lukeminen aikakatkaistiin.');
 
 // Pienennä kuva ennen lähetystä: pidempi sivu max 1400 px (riittää zoomaukseen), JPEG-laatu 0,85.
-// Järjestys: 1) selaimen oma avaus (iPhone avaa myös HEIC:n), 2) HEIC-muunnos heic2any-kirjastolla
-// (Android ja tietokoneet), 3) jos kuva on valmiiksi JPEG/PNG/WebP mutta pienennys ei onnistu
-// (esim. muisti loppuu jättikuvan kanssa), lähetetään alkuperäinen sellaisenaan (max 8 Mt).
-async function imageToDataUrl(file, max = 1400, onDims = () => {}, onKind = () => {}) {
+// Järjestys: 1) selaimen oma avaus (iPhone avaa myös HEIC:n), 2) HEIC-muunnos libheifillä (Android ja
+// tietokoneet), 3) jos kuva on valmiiksi JPEG/PNG/WebP mutta pienennys ei onnistu (esim. muisti loppuu
+// jättikuvan kanssa), lähetetään alkuperäinen sellaisenaan (max 8 Mt).
+// onStep kertoo etenemisen lokiin, jotta mahdollinen jumi näkyy palvelimen lokissa.
+async function imageToDataUrl(file, max = 1400, onDims = () => {}, onKind = () => {}, onStep = () => {}) {
   const kind = await sniffImage(file);
   onKind(kind);
+  if (kind === 'unreadable') throw new Error('Kuvatiedostoa ei voitu lukea. Jos kuva on pilvessä (esim. Google Kuvat), lataa se ensin puhelimeen tai valitse kuva Galleriasta.');
+  onStep('aloitettu');
   const original = async () => {
     if (['jpeg', 'png', 'webp'].includes(kind) && file.size <= 8 * 1024 * 1024) {
+      onStep('lähetetään alkuperäinen');
       const url = await readAsDataUrl(file);
-      // Tyyppi tiedoston sisällön mukaan, ei puhelimen ilmoittaman
-      return url.replace(/^data:[^;,]*/, `data:image/${kind}`);
+      return url.replace(/^data:[^;,]*/, `data:image/${kind}`); // tyyppi sisällön mukaan
     }
     return null;
   };
-  let loaded;
-  try {
-    loaded = await loadImage(file);
-  } catch {
-    if (kind === 'heic' || kind === 'unknown') {
-      toast('Muunnetaan kuvaa (HEIC)…');
-      try {
-        const heic2any = await loadHeicLib();
-        const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
-        loaded = await loadImage(Array.isArray(out) ? out[0] : out);
-      } catch { /* käsitellään alla */ }
+  let pic = null;
+  if (kind === 'heic') {
+    // Kokeillaan ensin selaimen omaa avausta (Safari), sitten libheif
+    try { const { img, url } = await withTimeout(loadImage(file), 20000, 'avaus aikakatkaistiin'); pic = { source: img, width: img.naturalWidth, height: img.naturalHeight, done: () => URL.revokeObjectURL(url) }; } catch { /* jatketaan */ }
+    if (!pic) {
+      toast('Muunnetaan HEIC-kuvaa… tämä voi kestää hetken.');
+      onStep('HEIC-muunnos');
+      try { pic = await decodeHeic(file, onStep); } catch (err) { onStep(`HEIC epäonnistui: ${err && (err.message || err)}`); }
     }
-    if (!loaded) {
+    if (!pic) throw new Error('HEIC-kuvan muunnos epäonnistui. Kokeile toista kuvaa, ota kuvakaappaus kuvasta tai vaihda kameran tallennusmuodoksi JPEG (Samsung: Kamera → asetukset → Kuvamuodot → poista Tehokkaat kuvat / HEIF, iPhone: Asetukset → Kamera → Muodot → Yhteensopivin).');
+  } else {
+    try { const { img, url } = await withTimeout(loadImage(file), 30000, 'avaus aikakatkaistiin'); pic = { source: img, width: img.naturalWidth, height: img.naturalHeight, done: () => URL.revokeObjectURL(url) }; } catch (err) { onStep(`avaus epäonnistui: ${err && err.message}`); }
+    if (!pic) {
       const raw = await original();
       if (raw) return raw;
-      throw new Error(kind === 'heic'
-        ? 'HEIC-kuvan muunnos epäonnistui. Kokeile toista kuvaa tai vaihda puhelimen kameran tallennusmuodoksi JPEG (iPhone: Asetukset → Kamera → Muodot → Yhteensopivin, Samsung: Kamera-asetukset → Kuvamuodot → poista HEIF).'
-        : 'Kuvaa ei voitu lukea. Kokeile JPEG-, PNG- tai HEIC-kuvaa.');
+      throw new Error(kind === 'unknown' ? 'Tiedosto ei näytä kuvalta. Kokeile JPEG-, PNG- tai HEIC-kuvaa.' : 'Kuvaa ei voitu avata. Kokeile toista kuvaa tai kuvakaappausta.');
     }
   }
   try {
-    const { img } = loaded;
-    onDims(`${img.naturalWidth}x${img.naturalHeight}`);
-    const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    onDims(`${pic.width}x${pic.height}`);
+    const scale = Math.min(1, max / Math.max(pic.width, pic.height));
     const c = document.createElement('canvas');
-    c.width = Math.max(1, Math.round(img.naturalWidth * scale));
-    c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    c.width = Math.max(1, Math.round(pic.width * scale));
+    c.height = Math.max(1, Math.round(pic.height * scale));
     const ctx = c.getContext('2d');
     if (!ctx) throw new Error('canvas');
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height); // läpinäkyvä PNG ei muutu JPEG:ssä mustaksi sotkuksi
-    ctx.drawImage(img, 0, 0, c.width, c.height);
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height); // läpinäkyvä PNG ei muutu JPEG:ssä sotkuksi
+    ctx.drawImage(pic.source, 0, 0, c.width, c.height);
     const url = c.toDataURL('image/jpeg', 0.85);
     if (url.length > 1000) return url;
     throw new Error('tyhjä canvas'); // muisti loppui tai selain esti piirron
   } catch (err) {
+    onStep(`pienennys epäonnistui: ${err && err.message}`);
     const raw = await original();
     if (raw) return raw;
     throw new Error('Kuvan pienentäminen epäonnistui. Kokeile pienempää kuvaa tai kuvakaappausta.');
   } finally {
-    URL.revokeObjectURL(loaded.url);
+    pic.done();
   }
 }
 

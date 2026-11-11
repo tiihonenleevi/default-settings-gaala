@@ -708,7 +708,7 @@ route('POST', '/api/admin/upload-log', ({ user, body }) => {
   if (recent.length >= 30) return { ok: true };
   recent.push(t); uploadLogTimes.set(user.id, recent);
   const f = (k, n = 120) => clean(body[k], n);
-  console.log(`[kuvalataus] ${now()} ${user.name}: ${f('result', 20)} | vaihe: ${f('stage', 40)} | tiedosto: "${f('name', 80)}" ${f('type', 40) || '(ei tyyppiä)'} ${Number(body.size) || 0} t | muoto: ${f('kind', 12) || '-'} | mitat: ${f('dims', 30) || '-'} | virhe: ${f('error', 300) || '-'} | selain: ${f('ua', 200)}`);
+  console.log(`[kuvalataus] ${now()} ${user.name}: ${f('result', 20)} | vaihe: ${f('stage', 160)} | tiedosto: "${f('name', 80)}" ${f('type', 40) || '(ei tyyppiä)'} ${Number(body.size) || 0} t | muoto: ${f('kind', 12) || '-'} | mitat: ${f('dims', 30) || '-'} | virhe: ${f('error', 300) || '-'} | selain: ${f('ua', 200)}`);
   return { ok: true };
 }); // kaikki kirjautuneet: myös osallistujien kuvaehdotusten ongelmat näkyvät lokissa
 
