@@ -1215,13 +1215,56 @@ photoInput.className = 'sr-only';
 photoInput.tabIndex = -1;
 photoInput.setAttribute('aria-hidden', 'true');
 document.body.appendChild(photoInput);
-photoInput.addEventListener('change', () => {
+photoInput.addEventListener('change', async () => {
   const file = photoInput.files && photoInput.files[0];
   const tgt = uploadTarget;
-  photoInput.value = ''; // sama kuva voidaan valita uudelleen
-  if (!file || !tgt) { uploadLog({ result: 'peruttu', stage: 'valinta', error: file ? 'kohde puuttui' : 'ei tiedostoa' }); return; }
-  uploadPhoto(tgt, file, 'valinta');
+  if (!file || !tgt) { photoInput.value = ''; uploadLog({ result: 'peruttu', stage: 'valinta', error: file ? 'kohde puuttui' : 'ei tiedostoa' }); return; }
+  // Android: valittu kuva on puhelimen galleriasta lainattu tiedosto, jonka lukulupa voi raueta, kun kenttä
+  // tyhjennetään tai aikaa kuluu. Siksi kuva luetaan heti muistiin ja vasta sitten kenttä tyhjennetään.
+  toast('Luetaan kuvaa…');
+  let copy;
+  try {
+    copy = await readIntoMemory(file);
+  } catch (err) {
+    uploadLog({ name: file.name, type: file.type, size: file.size, result: 'virhe', stage: 'valinta/muistiin luku', error: err.detail || err.message });
+    toast('Puhelin ei antanut selaimelle lupaa lukea kuvaa. Yritä uudelleen. Jos ei onnistu, avaa sivu Chromessa tai valitse kuva Tiedostot-sovelluksen kautta.', true);
+    return;
+  } finally {
+    photoInput.value = ''; // sama kuva voidaan valita uudelleen
+  }
+  uploadPhoto(tgt, copy, 'valinta');
 });
+
+// Lue valittu tiedosto kokonaan muistiin. Kolme eri tapaa, koska puhelinselaimissa jokin niistä voi epäonnistua
+// (esim. Androidin NotReadableError). Palauttaa uuden File-olion, joka ei enää riipu puhelimen tiedostoluvasta.
+async function readIntoMemory(file) {
+  const tries = [
+    ['arrayBuffer', () => file.arrayBuffer()],
+    ['FileReader', () => new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(r.error || new Error('FileReader'));
+      r.readAsArrayBuffer(file);
+    })],
+    ['blob-url', async () => {
+      const u = URL.createObjectURL(file);
+      try { return await (await fetch(u)).arrayBuffer(); } finally { URL.revokeObjectURL(u); }
+    }],
+  ];
+  const errors = [];
+  for (const [how, read] of tries) {
+    try {
+      const buf = await withTimeout(read(), 30000, 'aikakatkaisu');
+      if (buf && buf.byteLength) return new File([buf], file.name || 'kuva', { type: file.type || '', lastModified: file.lastModified });
+      errors.push(`${how}: tyhjä`);
+    } catch (e) {
+      errors.push(`${how}: ${(e && e.name) || ''} ${(e && e.message) || e}`.trim());
+    }
+  }
+  const err = new Error('Kuvatiedostoa ei voitu lukea.');
+  err.detail = errors.join(' / ').slice(0, 290);
+  throw err;
+}
 
 // Kirjaa latausyritys palvelimen lokiin vianetsintää varten (ei vaikuta itse lataukseen)
 function uploadLog(info) {
@@ -1251,7 +1294,7 @@ async function uploadPhoto(tgt, file, via) {
     uploadLog({ ...meta, result: 'onnistui', stage: via });
     openCrop(tgt.target, tgt.id); // heti rajaukseen ja esikatseluun
   } catch (err) {
-    uploadLog({ ...meta, result: 'virhe', stage: `${via}/${stage}`, error: err && err.message });
+    uploadLog({ ...meta, result: 'virhe', stage: `${via}/${stage}`, error: err && (err.detail ? `${err.message} (${err.detail})` : err.message) });
     if (err && err.message && stage === 'luku') toast(err.message, true); // lähetysvirheen api() näytti jo
   }
 }
@@ -1273,7 +1316,9 @@ document.addEventListener('drop', (e) => {
   const zone = e.target.closest && e.target.closest('[data-drop-target]');
   const file = e.dataTransfer.files && e.dataTransfer.files[0];
   if (!zone || !file) { if (file) toast('Pudota kuva kortin tai rivin päälle.', true); return; }
-  uploadPhoto({ target: zone.dataset.dropTarget, id: zone.dataset.dropId }, file, 'raahaus');
+  readIntoMemory(file)
+    .then((copy) => uploadPhoto({ target: zone.dataset.dropTarget, id: zone.dataset.dropId }, copy, 'raahaus'))
+    .catch((err) => { uploadLog({ name: file.name, type: file.type, size: file.size, result: 'virhe', stage: 'raahaus/muistiin luku', error: err.detail || err.message }); toast('Kuvaa ei voitu lukea.', true); });
 });
 
 function loadImage(blob) {
@@ -1356,7 +1401,7 @@ const readAsDataUrl = (blob) => withTimeout(new Promise((resolve, reject) => {
 async function imageToDataUrl(file, max = 1400, onDims = () => {}, onKind = () => {}, onStep = () => {}) {
   const kind = await sniffImage(file);
   onKind(kind);
-  if (kind === 'unreadable') throw new Error('Kuvatiedostoa ei voitu lukea. Jos kuva on pilvessä (esim. Google Kuvat), lataa se ensin puhelimeen tai valitse kuva Galleriasta.');
+  if (kind === 'unreadable') throw new Error('Kuvatiedostoa ei voitu lukea. Yritä uudelleen tai valitse toinen kuva.');
   onStep('aloitettu');
   const original = async () => {
     if (['jpeg', 'png', 'webp'].includes(kind) && file.size <= 8 * 1024 * 1024) {
