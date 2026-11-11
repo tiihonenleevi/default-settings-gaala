@@ -333,7 +333,7 @@ function stateFor(user, opts = {}) {
   base.photoSuggestions = (db.photoSuggestions || [])
     .filter((x) => db.users[x.personId] && (user.admin || (x.by === uid && !x.withdrawn && (x.source || 'suggestion') === 'suggestion')))
     .map((x) => {
-      const v = { id: x.id, personId: x.personId, src: imgUrl(x.image), createdAt: x.createdAt, mine: x.by === uid, current: db.users[x.personId].photo === x.image };
+      const v = { id: x.id, personId: x.personId, src: imgUrl(x.image), crop: x.crop || null, createdAt: x.createdAt, mine: x.by === uid, current: db.users[x.personId].photo === x.image };
       if (user.admin) Object.assign(v, { byName: userName(x.by), source: x.source || 'suggestion', withdrawn: !!x.withdrawn });
       return v;
     });

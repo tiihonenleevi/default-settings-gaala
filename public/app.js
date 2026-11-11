@@ -14,6 +14,8 @@ let cropping = null;
 let stats = null;
 let meCard = false; // käyttäjäkortti auki
 let photosOpen = false; // "Ehdota profiilikuvia" -näkymä auki
+const versionsOpen = new Set(); // henkilöt, joiden kuvaversiot on avattu näkyviin
+let previewVersion = null; // esikatseltavan kuvaversion id
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -119,7 +121,8 @@ function mainView() {
   </main>`}
   ${cropping ? cropView() : ''}
   ${stats ? statsView() : ''}
-  ${meCard && s.me.photo ? meCardView() : ''}`;
+  ${meCard && s.me.photo ? meCardView() : ''}
+  ${photosOpen && previewVersion ? versionPreview() : ''}`;
 }
 
 // Yläpalkin nimi. Jos käyttäjällä on kuva, sen pyöreä pikkukuva näkyy nimen vieressä
@@ -152,7 +155,7 @@ function photosView() {
   };
   const item = (x) => `
     <li class="sugg-item${x.current ? ' is-current' : ''}">
-      <img src="${x.src}" alt="" loading="lazy">
+      <button type="button" class="sugg-thumb" data-act="version-preview" data-id="${x.id}" aria-label="Esikatsele kuva" title="Esikatsele"><img src="${x.src}" alt="" loading="lazy"></button>
       <div class="sugg-meta">
         <span class="small">${who(x)}</span>
         <span class="small muted">${fmtTime(x.createdAt)}${x.withdrawn ? ' · ehdottaja perui' : ''}</span>
@@ -170,7 +173,7 @@ function photosView() {
       <p class="eyebrow">Profiilikuvat</p>
       <h1 class="h1">Ehdota profiilikuvia</h1>
       <p class="lead">${admin
-        ? 'Jokaisen kortin alla ovat kaikki henkilön kuvaversiot: ehdotukset, hallinnasta lisätyt ja aiemmat profiilikuvat. "Käytä" vaihtaa profiilikuvan, ja edellinen jää talteen, joten voit vaihtaa takaisin milloin vain.'
+        ? 'Avaa kortin "Kuvaversiot" nähdäksesi kaikki henkilön kuvat: ehdotukset, hallinnasta lisätyt ja aiemmat profiilikuvat. Klikkaa kuvaa esikatsellaksesi sitä. "Käytä" vaihtaa profiilikuvan, ja edellinen jää talteen, joten voit vaihtaa takaisin milloin vain.'
         : 'Lähetä kuva, joka sopisi kaverin ehdokaskorttiin. Järjestäjät valitsevat, mitä kuvia käytetään.'}</p>
       <div><button class="btn btn--secondary btn--sm" data-act="photos-close">Takaisin gaalaan</button></div>
     </header>
@@ -182,12 +185,51 @@ function photosView() {
         <article class="nom-card sugg-card" id="sugg-${p.id}" data-drop-target="sugg" data-drop-id="${p.id}">
           <div class="nom-media">${portrait(p)}${tag ? `<span class="tag nom-tag">${tag}</span>` : ''}</div>
           <div class="nom-body"><h3 class="h3">${esc(p.name)}</h3></div>
-          ${list.length ? `<ul class="sugg-list">${list.map(item).join('')}</ul>` : ''}
+          ${list.length ? `<button type="button" class="btn btn--ghost versions-toggle" data-act="versions-toggle" data-id="${p.id}" aria-expanded="${versionsOpen.has(p.id)}" aria-controls="vers-${p.id}">${admin ? 'Kuvaversiot' : 'Omat ehdotukset'} (${list.length}) <span class="chev" aria-hidden="true">${versionsOpen.has(p.id) ? '▴' : '▾'}</span></button>` : ''}
+          ${list.length && versionsOpen.has(p.id) ? `<ul class="sugg-list" id="vers-${p.id}">${list.map(item).join('')}</ul>` : ''}
           <button class="btn btn--sm btn--secondary" type="button" data-act="photo-pick" data-target="sugg" data-id="${p.id}">Ehdota kuvaa</button>
         </article>`;
       }).join('')}
     </div>` : '<div class="empty">Ei vielä ehdokkaita.</div>'}
   </section>`;
+}
+
+// Kuvaversion esikatselu: kortti sellaisena kuin muut sen näkisivät + koko kuva rajaamattomana.
+// Nuolilla voi selata saman henkilön versioita; admin voi ottaa kuvan käyttöön suoraan tästä.
+function versionList(personId) {
+  return (state.photoSuggestions || []).filter((x) => x.personId === personId)
+    .sort((a, b) => (b.current - a.current) || String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+function versionPreview() {
+  const s = state; const admin = s.me.admin;
+  const x = (s.photoSuggestions || []).find((y) => y.id === previewVersion);
+  if (!x) return '';
+  const list = versionList(x.personId); const i = list.findIndex((y) => y.id === x.id);
+  const person = (admin && s.admin ? s.admin.participants : s.people || []).find((p) => p.id === x.personId) || { name: '' };
+  const photo = { src: x.src, ...(x.crop || { x: 50, y: 50, z: 1 }) };
+  const origin = !admin ? 'Sinun ehdotuksesi' : x.source === 'previous' ? 'Aiempi profiilikuva' : x.source === 'admin' ? `Lisätty hallinnasta${x.byName ? ` · ${x.byName}` : ''}` : `Ehdottaja: ${x.byName || 'poistettu osallistuja'}`;
+  return `
+  <div class="crop-overlay preview-overlay" role="dialog" aria-modal="true" aria-labelledby="pv-h">
+    <div class="crop-dialog panel preview-dialog">
+      <p class="eyebrow" id="pv-h">Esikatselu · ${esc(person.name)}${list.length > 1 ? ` · ${i + 1} / ${list.length}` : ''}</p>
+      <p class="small muted" style="margin:0">${esc(origin)} · ${fmtTime(x.createdAt)}${x.withdrawn ? ' · ehdottaja perui' : ''}</p>
+      <div class="preview-row">
+        ${list.length > 1 ? `<button class="btn btn--ghost preview-nav" data-act="version-step" data-step="-1" aria-label="Edellinen kuva">‹</button>` : ''}
+        <div class="crop-previews">
+          <article class="nom-card crop-card">
+            <div class="nom-media">${portrait({ name: person.name, photo })}${x.current ? '<span class="tag nom-tag">Käytössä</span>' : ''}</div>
+            <div class="nom-body"><h3 class="h3">${esc(person.name)}</h3><p>Ehdokaskortti</p></div>
+          </article>
+          <figure class="preview-full"><img src="${x.src}" alt="Koko kuva"><figcaption class="small muted">Koko kuva${x.crop ? '' : ' · rajaus säädetään käyttöönoton jälkeen'}</figcaption></figure>
+        </div>
+        ${list.length > 1 ? `<button class="btn btn--ghost preview-nav" data-act="version-step" data-step="1" aria-label="Seuraava kuva">›</button>` : ''}
+      </div>
+      <div class="row" style="justify-content:center;gap:10px;flex-wrap:wrap">
+        ${admin && !x.current ? `<button class="btn btn--primary btn--sm" data-act="sugg-accept" data-id="${x.id}">Käytä tätä kuvaa</button>` : ''}
+        <button class="btn btn--secondary btn--sm" data-act="preview-close">Sulje</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 // Käyttäjäkortti: sama pystykortti kuin ehdokkailla, rajaus mukana. Sulkeutuu napista, taustasta tai Escillä.
@@ -920,11 +962,12 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (cropping) { cropping = null; render(); } else if (stats) { stats = null; render(); } else if (meCard) { meCard = false; render(); }
+  if (cropping) { cropping = null; render(); } else if (previewVersion) { previewVersion = null; render(); } else if (stats) { stats = null; render(); } else if (meCard) { meCard = false; render(); }
 });
 // Käyttäjäkortin tumma tausta sulkee kortin
 document.addEventListener('click', (e) => {
   if (meCard && e.target.classList && e.target.classList.contains('me-overlay')) { meCard = false; render(); }
+  if (previewVersion && e.target.classList && e.target.classList.contains('preview-overlay')) { previewVersion = null; render(); }
 });
 
 // Kuvan valinta: nappi avaa sivun ainoan, pysyvän tiedostokentän (ks. photoInput)
@@ -1037,13 +1080,33 @@ document.addEventListener('click', async (e) => {
       break;
     case 'stats-close': stats = null; render(); break;
     case 'photos-open': {
-      photosOpen = true; meCard = false; render();
+      photosOpen = true; meCard = false;
+      if (t.dataset.person) versionsOpen.add(t.dataset.person);
+      render();
       const card = t.dataset.person && document.getElementById('sugg-' + t.dataset.person);
       if (card) card.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0);
       if (state.me.admin && !isTest() && state.photoNew) api('POST', '/api/admin/photos-seen', {}).catch(() => {});
       break;
     }
-    case 'photos-close': photosOpen = false; render(); window.scrollTo(0, 0); break;
+    case 'photos-close': photosOpen = false; previewVersion = null; render(); window.scrollTo(0, 0); break;
+    case 'versions-toggle':
+      if (versionsOpen.has(id)) versionsOpen.delete(id); else versionsOpen.add(id);
+      render(); document.querySelector(`[data-act="versions-toggle"][data-id="${id}"]`)?.focus();
+      break;
+    case 'version-preview': previewVersion = id; render(); document.querySelector('[data-act="preview-close"]')?.focus(); break;
+    case 'version-step': {
+      const cur = (state.photoSuggestions || []).find((y) => y.id === previewVersion);
+      if (!cur) break;
+      const list = versionList(cur.personId); const i = list.findIndex((y) => y.id === cur.id);
+      previewVersion = list[(i + Number(t.dataset.step) + list.length) % list.length].id; render();
+      document.querySelector(`[data-act="version-step"][data-step="${t.dataset.step}"]`)?.focus();
+      break;
+    }
+    case 'preview-close': {
+      const back = previewVersion; previewVersion = null; render();
+      document.querySelector(`[data-act="version-preview"][data-id="${back}"]`)?.focus();
+      break;
+    }
     case 'sugg-del':
       if (isTest()) { state.photoSuggestions = (state.photoSuggestions || []).filter((x) => x.id !== id); render(); toast('Kuvaehdotus poistettu. (testi)'); break; }
       if (confirm(state.me.admin ? 'Poistetaanko kuva pysyvästi? Sitä ei voi palauttaa.' : 'Poistetaanko kuvaehdotus?')) await api('DELETE', `/api/photo-suggestions/${id}`, {}).catch(() => {});
@@ -1053,7 +1116,7 @@ document.addEventListener('click', async (e) => {
       if (!x) break;
       const who = ((state.admin ? state.admin.participants : state.people || []).find((p) => p.id === x.personId) || {}).name || 'henkilön';
       if (!confirm(`Vaihdetaanko tämä kuva henkilön ${who} profiilikuvaksi? Nykyinen kuva jää talteen versioihin.`)) break;
-      try { await api('POST', `/api/admin/photo-suggestions/${id}/accept`, {}); openCrop('user', x.personId); } catch {}
+      try { await api('POST', `/api/admin/photo-suggestions/${id}/accept`, {}); previewVersion = null; openCrop('user', x.personId); } catch {}
       break;
     }
     case 'me-card': meCard = true; render(); document.querySelector('[data-act="me-close"]')?.focus(); break;

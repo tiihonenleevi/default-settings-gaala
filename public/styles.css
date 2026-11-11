@@ -779,3 +779,22 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 .sugg-card { scroll-margin-top: 150px; }
 .sugg-actions { margin-left: -6px; gap: 0 4px; }
 .sugg-actions .btn { padding-inline: 6px; }
+/* Kuvaversiot napin takana + esikatselu */
+.versions-toggle { align-self: center; margin-top: 6px; gap: 6px; }
+.versions-toggle .chev { font-size: 12px; letter-spacing: 0; }
+.sugg-thumb { padding: 0; margin: 0; border: 0; background: none; cursor: zoom-in; border-radius: 8px; display: block; }
+.sugg-thumb:hover img { outline: 2px solid var(--gold); outline-offset: 1px; }
+.sugg-thumb:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+@media (max-width: 560px) { .sugg-thumb { width: 100%; } }
+.preview-dialog { width: min(820px, 100%); }
+.preview-row { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
+.preview-row .crop-previews { flex: 1; min-width: 0; align-items: center; }
+.preview-full { margin: 0; display: grid; gap: 6px; justify-items: center; min-width: 0; }
+.preview-full img { display: block; max-width: min(380px, 100%); max-height: 420px; width: auto; height: auto; border-radius: var(--radius-md); border: 1px solid var(--border); }
+.preview-nav { font-size: 28px; line-height: 1; min-width: 44px; padding: 0 6px; letter-spacing: 0; }
+@media (max-width: 560px) {
+  .preview-row { flex-wrap: wrap; }
+  .preview-row .crop-previews { order: -1; flex-basis: 100%; }
+  .preview-full img { max-height: 260px; }
+  .preview-row .preview-nav { flex: 1; }
+}
