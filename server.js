@@ -185,7 +185,7 @@ function saveImage(dataUrl) {
   if (!m) fail(400, 'Kuvan pitää olla JPEG-, PNG- tai WebP-muodossa.');
   const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
   const buf = Buffer.from(m[2], 'base64');
-  if (buf.length > 3 * 1024 * 1024) fail(413, 'Kuva on liian suuri (max 3 Mt).');
+  if (buf.length > 8 * 1024 * 1024) fail(413, 'Kuva on liian suuri (max 8 Mt).');
   if (!IMG_TYPES[ext].every((b, i) => buf[i] === b)) fail(400, 'Tiedosto ei ole kelvollinen kuva.');
   const name = `${newId()}.${ext}`;
   fs.writeFileSync(path.join(IMG_DIR, name), buf);
@@ -613,7 +613,7 @@ route('POST', '/api/photo-suggestions', ({ user, body }) => {
   db.photoSuggestions.push({ id: newId(), personId: person.id, by: user.id, image, crop: null, source: 'suggestion', createdAt: now() });
   writeDb();
   return { ...stateFor(user), notice: `Kuvaehdotus lähetetty: ${person.name}.` };
-}, { maxBody: 4.5 * 1024 * 1024 });
+}, { maxBody: 12 * 1024 * 1024 });
 
 // Osallistuja perii oman ehdotuksensa: se katoaa hänen näkymästään, mutta jää adminien versiolistaan.
 // Admin poistaa version pysyvästi (myös tiedoston). Käytössä olevaa kuvaa ei voi poistaa.
@@ -702,11 +702,15 @@ route('POST', '/api/admin/users/:id', ({ user, params, body }) => {
 
 // Kuvan latauksen vianetsintä: selain kertoo jokaisesta latausyrityksestä, ja tieto kirjoitetaan palvelimen
 // lokiin (docker logs gaala | grep kuvalataus). Ei tallenneta tietokantaan.
+const uploadLogTimes = new Map(); // käyttäjä → viimeisten lokirivien ajat (max 30 / min)
 route('POST', '/api/admin/upload-log', ({ user, body }) => {
+  const t = Date.now(); const recent = (uploadLogTimes.get(user.id) || []).filter((x) => t - x < 60000);
+  if (recent.length >= 30) return { ok: true };
+  recent.push(t); uploadLogTimes.set(user.id, recent);
   const f = (k, n = 120) => clean(body[k], n);
-  console.log(`[kuvalataus] ${now()} ${user.name}: ${f('result', 20)} | vaihe: ${f('stage', 40)} | tiedosto: "${f('name', 80)}" ${f('type', 40) || '(ei tyyppiä)'} ${Number(body.size) || 0} t | mitat: ${f('dims', 30) || '-'} | virhe: ${f('error', 300) || '-'} | selain: ${f('ua', 200)}`);
+  console.log(`[kuvalataus] ${now()} ${user.name}: ${f('result', 20)} | vaihe: ${f('stage', 40)} | tiedosto: "${f('name', 80)}" ${f('type', 40) || '(ei tyyppiä)'} ${Number(body.size) || 0} t | muoto: ${f('kind', 12) || '-'} | mitat: ${f('dims', 30) || '-'} | virhe: ${f('error', 300) || '-'} | selain: ${f('ua', 200)}`);
   return { ok: true };
-}, { admin: true });
+}); // kaikki kirjautuneet: myös osallistujien kuvaehdotusten ongelmat näkyvät lokissa
 
 // Osallistujan (henkilön) kuva: näkyy kaikissa hänen ehdokaskorteissaan, ellei kortilla ole omaa kuvaa
 route('POST', '/api/admin/users/:id/photo', ({ user, params, body }) => {
@@ -718,7 +722,7 @@ route('POST', '/api/admin/users/:id/photo', ({ user, params, body }) => {
   db.photoSuggestions.push(version);
   writeDb();
   return { ...stateFor(user), notice: `Kuva tallennettu: ${u.name}.` };
-}, { admin: true, maxBody: 4.5 * 1024 * 1024 });
+}, { admin: true, maxBody: 12 * 1024 * 1024 });
 
 route('DELETE', '/api/admin/users/:id/photo', ({ user, params }) => {
   const u = db.users[params.id];
@@ -885,7 +889,7 @@ route('POST', '/api/admin/nominees/:id/photo', ({ user, params, body }) => {
   nom.crop = null;
   writeDb();
   return { ...stateFor(user), notice: 'Ehdokaskortin kuva tallennettu.' };
-}, { admin: true, maxBody: 4.5 * 1024 * 1024 });
+}, { admin: true, maxBody: 12 * 1024 * 1024 });
 
 // Kortin rajaus koskee kortilla näkyvää kuvaa (oma kuva tai henkilön kuva)
 route('POST', '/api/admin/nominees/:id/crop', ({ user, params, body }) => {

@@ -1185,10 +1185,14 @@ document.addEventListener('change', async (e) => {
 // tai tietokoneelta valittu HEIC tulee sellaisenaan, eikä kaikki selaimet osaa avata sitä. Silloin kuva muunnetaan
 // selaimessa JPEGiksi heic2any-kirjastolla (libheif), joka ladataan vain tarvittaessa (~1,3 Mt).
 const HEIC_LIB = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
-// Safarissa image/heic accept-listassa muuttaa JPEG/PNG-kuvat HEIC:ksi (Safari 17 -bugi), joten Applen
-// WebKit-selaimille riittää image/*. Muille lisätään .heic/.heif, jotta tiedostovalitsin näyttää ne.
-const APPLE_WEBKIT = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Safari/.test(navigator.userAgent) && !/Chrome|Chromium|Edg|Android/.test(navigator.userAgent));
-const PHOTO_ACCEPT = APPLE_WEBKIT ? 'image/*' : 'image/*,.heic,.heif';
+// Kuvan valitsin. Puhelimissa pelkkä image/*:
+// - Androidissa image/* avaa kuvagallerian/kameran; tiedostopäätteet listassa pakottaisivat tiedostoselaimen.
+// - iPhonessa (ja Macin Safarissa) .heic accept-listassa muuttaa JPEG/PNG-kuvat HEIC:ksi (Safari 17 -bugi).
+// Tietokoneen muissa selaimissa lisätään .heic/.heif, jotta tiedostovalitsin näyttää myös ne.
+const UA = navigator.userAgent;
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const APPLE_WEBKIT = /iPhone|iPad|iPod/.test(UA) || (/Safari/.test(UA) && !/Chrome|Chromium|Edg|Android/.test(UA));
+const PHOTO_ACCEPT = IS_MOBILE || APPLE_WEBKIT ? 'image/*' : 'image/*,.heic,.heif';
 
 // Yksi pysyvä tiedostokenttä #app-alueen ulkopuolella. Sivu piirretään taustalla uudelleen 15 s välein ja
 // kun välilehti palaa näkyviin (esim. iPhonen kuvavalitsimen sulkeutuessa). Jos kenttä olisi näkymän sisällä,
@@ -1220,7 +1224,7 @@ async function uploadPhoto(tgt, file, via) {
   let stage = 'luku';
   try {
     toast('Ladataan kuvaa…');
-    const image = await imageToDataUrl(file, 1400, (d) => { meta.dims = d; });
+    const image = await imageToDataUrl(file, 1400, (d) => { meta.dims = d; }, (k) => { meta.kind = k; });
     stage = 'lähetys';
     if (tgt.target === 'sugg') {
       if (isTest()) { // testikäyttäjä: kuva näkyy vain omassa selaimessa
@@ -1228,7 +1232,7 @@ async function uploadPhoto(tgt, file, via) {
         render(); toast('Kuvaehdotus lisätty. (testi, ei tallennettu)'); return;
       }
       await api('POST', '/api/photo-suggestions', { personId: tgt.id, image });
-      if (state.me.admin) uploadLog({ ...meta, result: 'onnistui', stage: `${via}/ehdotus` });
+      uploadLog({ ...meta, result: 'onnistui', stage: `${via}/ehdotus` });
       return;
     }
     await api('POST', `/api/admin/${tgt.target === 'user' ? 'users' : 'nominees'}/${tgt.id}/photo`, { image });
@@ -1282,21 +1286,64 @@ function loadHeicLib() {
   return heicLib;
 }
 
-// Pienennä kuva ennen lähetystä: pidempi sivu max 1400 px (riittää zoomaukseen), JPEG-laatu 0,85
-async function imageToDataUrl(file, max = 1400, onDims = () => {}) {
+// Tunnista kuvan muoto tiedoston alusta. Puhelimet antavat joskus väärän tai tyhjän tyypin ja nimen
+// (esim. Androidin galleriasovellukset, Google Kuvat, iPhonen Tiedostot), joten luotetaan sisältöön.
+async function sniffImage(file) {
+  try {
+    const b = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+    if (b[0] === 0xff && b[1] === 0xd8) return 'jpeg';
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'png';
+    if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45) return 'webp';
+    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return 'gif';
+    const box = String.fromCharCode(...b.slice(4, 12));
+    if (box.startsWith('ftyp')) {
+      const brand = box.slice(4);
+      if (/^(heic|heix|heim|heis|hevc|hevx|mif1|msf1)/.test(brand)) return 'heic'; // iPhone, Samsungin HEIF
+      if (/^avi[fs]/.test(brand)) return 'avif';
+    }
+  } catch { /* luku epäonnistui: jatketaan tuntemattomana */ }
+  return /\.(heic|heif)$/i.test(file.name || '') || /hei[cf]/i.test(file.type || '') ? 'heic' : 'unknown';
+}
+
+const readAsDataUrl = (blob) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result));
+  r.onerror = () => reject(new Error('Kuvan lukeminen epäonnistui.'));
+  r.readAsDataURL(blob);
+});
+
+// Pienennä kuva ennen lähetystä: pidempi sivu max 1400 px (riittää zoomaukseen), JPEG-laatu 0,85.
+// Järjestys: 1) selaimen oma avaus (iPhone avaa myös HEIC:n), 2) HEIC-muunnos heic2any-kirjastolla
+// (Android ja tietokoneet), 3) jos kuva on valmiiksi JPEG/PNG/WebP mutta pienennys ei onnistu
+// (esim. muisti loppuu jättikuvan kanssa), lähetetään alkuperäinen sellaisenaan (max 8 Mt).
+async function imageToDataUrl(file, max = 1400, onDims = () => {}, onKind = () => {}) {
+  const kind = await sniffImage(file);
+  onKind(kind);
+  const original = async () => {
+    if (['jpeg', 'png', 'webp'].includes(kind) && file.size <= 8 * 1024 * 1024) {
+      const url = await readAsDataUrl(file);
+      // Tyyppi tiedoston sisällön mukaan, ei puhelimen ilmoittaman
+      return url.replace(/^data:[^;,]*/, `data:image/${kind}`);
+    }
+    return null;
+  };
   let loaded;
   try {
     loaded = await loadImage(file);
   } catch {
-    // Selain ei osannut avata kuvaa: kokeillaan HEIC-muunnosta (tiedostonimi tai tyyppi voi puuttua, joten kokeillaan aina)
-    toast('Muunnetaan kuvaa (HEIC)…');
-    try {
-      const heic2any = await loadHeicLib();
-      const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
-      loaded = await loadImage(Array.isArray(out) ? out[0] : out);
-    } catch {
-      throw new Error(/\.(heic|heif)$/i.test(file.name || '') || /hei[cf]/i.test(file.type)
-        ? 'HEIC-kuvan muunnos epäonnistui. Valitse kuva Kuvat-kirjastosta (ei Tiedostot-sovelluksesta) tai vaihda iPhonessa Asetukset → Kamera → Muodot → Yhteensopivin.'
+    if (kind === 'heic' || kind === 'unknown') {
+      toast('Muunnetaan kuvaa (HEIC)…');
+      try {
+        const heic2any = await loadHeicLib();
+        const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+        loaded = await loadImage(Array.isArray(out) ? out[0] : out);
+      } catch { /* käsitellään alla */ }
+    }
+    if (!loaded) {
+      const raw = await original();
+      if (raw) return raw;
+      throw new Error(kind === 'heic'
+        ? 'HEIC-kuvan muunnos epäonnistui. Kokeile toista kuvaa tai vaihda puhelimen kameran tallennusmuodoksi JPEG (iPhone: Asetukset → Kamera → Muodot → Yhteensopivin, Samsung: Kamera-asetukset → Kuvamuodot → poista HEIF).'
         : 'Kuvaa ei voitu lukea. Kokeile JPEG-, PNG- tai HEIC-kuvaa.');
     }
   }
@@ -1307,8 +1354,17 @@ async function imageToDataUrl(file, max = 1400, onDims = () => {}) {
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(img.naturalWidth * scale));
     c.height = Math.max(1, Math.round(img.naturalHeight * scale));
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-    return c.toDataURL('image/jpeg', 0.85);
+    const ctx = c.getContext('2d');
+    if (!ctx) throw new Error('canvas');
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height); // läpinäkyvä PNG ei muutu JPEG:ssä mustaksi sotkuksi
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    const url = c.toDataURL('image/jpeg', 0.85);
+    if (url.length > 1000) return url;
+    throw new Error('tyhjä canvas'); // muisti loppui tai selain esti piirron
+  } catch (err) {
+    const raw = await original();
+    if (raw) return raw;
+    throw new Error('Kuvan pienentäminen epäonnistui. Kokeile pienempää kuvaa tai kuvakaappausta.');
   } finally {
     URL.revokeObjectURL(loaded.url);
   }
