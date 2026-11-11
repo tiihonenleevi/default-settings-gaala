@@ -798,3 +798,6 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
   .preview-full img { max-height: 260px; }
   .preview-row .preview-nav { flex: 1; }
 }
+/* Palauteloki vaiheittain */
+.fb-group { display: grid; gap: 8px; }
+.fb-group-h { margin: 6px 0 0; display: flex; align-items: baseline; gap: 10px; font-size: 20px; }

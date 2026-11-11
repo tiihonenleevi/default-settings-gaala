@@ -53,7 +53,7 @@ function emptyDb() {
     nomVotes: [],
     finalVotes: {},
     finalVoteAt: {}, // milloin finaaliääni annettiin: { userId: { categoryId: aikaleima } }
-    feedback: [], // suljetun äänestyksen palautteet: { id, userId, text, createdAt }
+    feedback: [], // palautteet: { id, userId, phase, text, createdAt }; phase 1–4 = odotustila lukituksen jälkeen, 5 = suljettu
     // Profiilikuvien versiot: kaikki ehdotetut, adminin lisäämät ja aiemmat kuvat säilyvät, ja admin voi vaihtaa niiden välillä.
     // { id, personId, by, image, crop, source: 'suggestion' | 'admin' | 'previous', withdrawn, createdAt }
     photoSuggestions: [],
@@ -338,9 +338,10 @@ function stateFor(user, opts = {}) {
       return v;
     });
   if (user.admin) base.photoNew = (db.photoSuggestions || []).filter((x) => db.users[x.personId] && (x.source || 'suggestion') === 'suggestion' && x.by !== uid && !x.withdrawn && x.createdAt > seen).length;
-  if (phase === 5) {
-    // Muille nimettömänä: kirjoittajaa ei lähetetä selaimeen lainkaan (vain oma-lippu poistoa varten)
-    base.feedback = (db.feedback || []).map((f) => ({ id: f.id, text: f.text, createdAt: f.createdAt, mine: f.userId === uid }));
+  // Palaute: suljetussa vaiheessa ja jokaisen vaiheen odotustilassa (lukituksen jälkeen). Kukin näkee saman vaiheen
+  // palautteet. Muille nimettömänä: kirjoittajaa ei lähetetä selaimeen lainkaan (vain oma-lippu).
+  if (phase === 5 || isLocked(user) || user.tester) {
+    base.feedback = (db.feedback || []).filter((f) => (f.phase || 5) === phase).map((f) => ({ id: f.id, text: f.text, createdAt: f.createdAt, mine: f.userId === uid }));
   }
 
   base.used = {
@@ -397,7 +398,7 @@ function adminView() {
     locked: Object.values(db.users).filter((u) => !u.root && !u.tester && isLocked(u)).length,
     winners: winnersFor(advancedCats().map((c) => c.id)),
     // Palauteloki: vain adminit näkevät kirjoittajan
-    feedbackLog: (db.feedback || []).map((f) => ({ id: f.id, name: userName(f.userId) || 'Poistettu osallistuja', text: f.text, createdAt: f.createdAt })),
+    feedbackLog: (db.feedback || []).map((f) => ({ id: f.id, phase: f.phase || 5, name: userName(f.userId) || 'Poistettu osallistuja', text: f.text, createdAt: f.createdAt })),
   };
 }
 
@@ -576,15 +577,17 @@ route('POST', '/api/lock', ({ user }) => {
   return { ...stateFor(user), notice: 'Lukko sisään! Vastauksesi tähän vaiheeseen on tallennettu.' };
 });
 
-// Palaute suljetussa vaiheessa: muille osallistujille nimetön, adminit näkevät kirjoittajan palautelokista.
+// Palaute suljetussa vaiheessa ja jokaisen vaiheen odotustilassa (kun omat vastaukset on lukittu).
+// Muille osallistujille nimetön, adminit näkevät kirjoittajan palautelokista vaiheittain eriteltynä.
 route('POST', '/api/feedback', ({ user, body }) => {
-  requirePhase(5);
   requireVoter(user);
+  const phase = db.settings.phase;
+  if (phase !== 5 && !isLocked(user)) fail(409, 'Palautteen voi lähettää, kun olet lukinnut vastauksesi.');
   const text = String(body.text ?? '').replace(/\r\n?/g, '\n').trim().slice(0, 1000);
   if (text.length < 2) fail(400, 'Kirjoita palaute ensin.');
   db.feedback = db.feedback || [];
-  if (db.feedback.filter((f) => f.userId === user.id).length >= 20) fail(400, 'Olet jo lähettänyt paljon palautetta.');
-  db.feedback.push({ id: newId(), userId: user.id, text, createdAt: now() });
+  if (db.feedback.filter((f) => f.userId === user.id && (f.phase || 5) === phase).length >= 20) fail(400, 'Olet jo lähettänyt paljon palautetta.');
+  db.feedback.push({ id: newId(), userId: user.id, phase, text, createdAt: now() });
   writeDb();
   return { ...stateFor(user), notice: 'Palaute lähetetty.' };
 });
@@ -762,7 +765,7 @@ route('GET', '/api/admin/users/:id/stats', ({ params }) => {
     nominees: db.nominees.filter((n) => n.by === u.id).map((n) => ({ category: catName(n.categoryId), name: nomName(n), reason: n.reason, at: n.createdAt, editedAt: n.editedAt || null, finalist: !!n.finalist })),
     nomVotes: db.nomVotes.filter((v) => v.userId === u.id && nom(v.nomineeId)).map((v) => { const n = nom(v.nomineeId); return { category: catName(n.categoryId), name: nomName(n), reason: n.reason, at: v.at || null }; }),
     finals: Object.entries(fin).filter(([, nid]) => nom(nid)).map(([cid, nid]) => ({ category: catName(cid), name: nomName(nom(nid)), reason: nom(nid).reason, at: finAt[cid] || null })),
-    feedback: (db.feedback || []).filter((f) => f.userId === u.id).map((f) => ({ text: f.text, at: f.createdAt })),
+    feedback: (db.feedback || []).filter((f) => f.userId === u.id).map((f) => ({ text: f.text, at: f.createdAt, phase: f.phase || 5 })),
   };
 }, { admin: true });
 

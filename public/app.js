@@ -489,7 +489,8 @@ function waitingView() {
       <dl class="lock-summary">${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
       <p class="small muted" style="margin:0">Haluatko muuttaa jotain? Pyydä järjestäjää avaamaan lukko.</p>
     </div>
-  </section>`;
+  </section>
+  ${feedbackView(true)}`;
 }
 
 // Vaihe 1: kategorioiden ehdottaminen (ei äänestystä)
@@ -812,17 +813,18 @@ function participantsView() {
   </div>`;
 }
 
-// ---------- Palaute (suljettu vaihe) ----------
-// Palaute näkyy muille ilman nimeä; järjestäjät näkevät kirjoittajan hallinnan palautelokista.
-function feedbackView() {
+// ---------- Palaute (suljettu vaihe ja odotustilat) ----------
+// Palaute näkyy muille ilman nimeä; järjestäjät näkevät kirjoittajan hallinnan palautelokista vaiheittain.
+// waiting = odotustila lukituksen jälkeen: listassa näkyvät saman vaiheen odotustilan palautteet.
+function feedbackView(waiting = false) {
   const list = [...(state.feedback || [])].reverse();
   return `
   <section class="section feedback">
     <form class="panel feedback-form" id="feedback-form">
       <p class="eyebrow">Anonyymi palaute</p>
-      <h2 class="h2">Mitä mieltä olit?</h2>
+      <h2 class="h2">${waiting ? 'Mitä mieltä olet tähän asti?' : 'Mitä mieltä olit?'}</h2>
       <p class="small muted" style="margin:0">Palaute näkyy muille nimettömänä.</p>
-      <div class="field"><label for="fb-text" class="sr-only">Palaute</label><textarea class="input" id="fb-text" data-keep rows="4" maxlength="1000" placeholder="Kerro gaalasta, äänestyksestä tai mistä vain…"></textarea></div>
+      <div class="field"><label for="fb-text" class="sr-only">Palaute</label><textarea class="input" id="fb-text" data-keep rows="4" maxlength="1000" placeholder="${waiting ? 'Kerro tästä vaiheesta, ehdotuksista tai mistä vain…' : 'Kerro gaalasta, äänestyksestä tai mistä vain…'}"></textarea></div>
       <div><button class="btn btn--primary btn--sm" type="submit">Lähetä palaute</button></div>
     </form>
     <div class="feedback-list">
@@ -837,22 +839,28 @@ function feedbackView() {
 
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleString('fi-FI', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
 
-// Hallinnan palauteloki: kirjoittaja näkyy vain täällä
+// Hallinnan palauteloki: kirjoittaja näkyy vain täällä. Eritelty vaiheittain: vaiheiden 1–4 odotustilat ja suljettu vaihe.
+const FEEDBACK_GROUPS = { 1: 'Odotustila · vaihe 1 Kategoriaehdotukset', 2: 'Odotustila · vaihe 2 Kategoria-äänestys', 3: 'Odotustila · vaihe 3 Ehdokkaat', 4: 'Odotustila · vaihe 4 Finaali', 5: 'Suljettu · gaalan jälkeen' };
 function feedbackLogView() {
-  const log = [...(state.admin.feedbackLog || [])].reverse();
+  const log = state.admin.feedbackLog || [];
+  const groups = [1, 2, 3, 4, 5].map((ph) => [ph, log.filter((f) => (f.phase || 5) === ph).reverse()]).filter(([, l]) => l.length);
   return `
   <div style="display:grid;gap:12px">
     <p class="eyebrow">Palauteloki · ${log.length}</p>
-    ${log.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>Aika</th><th>Kirjoittaja</th><th>Palaute</th><th></th></tr></thead>
-      <tbody>${log.map((f) => `
-        <tr>
-          <td class="small" style="white-space:nowrap">${fmtTime(f.createdAt)}</td>
-          <td><b style="font-weight:500">${esc(f.name)}</b></td>
-          <td class="fb-text">${esc(f.text).replace(/\n/g, '<br>')}</td>
-          <td class="act"><button class="btn btn--ghost" data-act="fb-del" data-id="${f.id}">Poista</button></td>
-        </tr>`).join('')}</tbody>
-    </table></div>` : '<div class="empty">Ei vielä palautetta.</div>'}
+    ${groups.length ? groups.map(([ph, l]) => `
+    <div class="fb-group">
+      <h3 class="h3 fb-group-h">${FEEDBACK_GROUPS[ph]} <span class="small muted">${l.length}</span></h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Aika</th><th>Kirjoittaja</th><th>Palaute</th><th></th></tr></thead>
+        <tbody>${l.map((f) => `
+          <tr>
+            <td class="small" style="white-space:nowrap">${fmtTime(f.createdAt)}</td>
+            <td><b style="font-weight:500">${esc(f.name)}</b></td>
+            <td class="fb-text">${esc(f.text).replace(/\n/g, '<br>')}</td>
+            <td class="act"><button class="btn btn--ghost" data-act="fb-del" data-id="${f.id}">Poista</button></td>
+          </tr>`).join('')}</tbody>
+      </table></div>
+    </div>`).join('') : '<div class="empty">Ei vielä palautetta. Palautetta voi antaa jokaisen vaiheen odotustilassa ja gaalan jälkeen.</div>'}
   </div>`;
 }
 
@@ -874,7 +882,7 @@ function statsView() {
     ['Vaihe 3 · Ehdokasäänet', [...st.nomVotes].sort(byTime).map((v) => [v.at, `${v.name} – ${v.reason}`, v.category])],
     ['Vaihe 4 · Finaaliäänet', [...st.finals].sort(byTime).map((v) => [v.at, `${v.name} – ${v.reason}`, v.category])],
     ['Lukitukset', [...st.locks].sort(byTime).map((l) => [l.at, `Lukko sisään: vaihe ${l.phase}`, l.phaseName])],
-    ['Palaute', [...st.feedback].sort(byTime).map((f) => [f.at, f.text, ''])],
+    ['Palaute', [...st.feedback].sort(byTime).map((f) => [f.at, f.text, (FEEDBACK_GROUPS[f.phase || 5] || '').split(' · ')[0] + ((f.phase || 5) < 5 ? ` (vaihe ${f.phase})` : '')])],
   ];
   const count = (k) => st[k].length;
   return `
