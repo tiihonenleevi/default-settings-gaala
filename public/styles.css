@@ -711,3 +711,21 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
   #users-form + .table-wrap td.act { grid-area: act; display: flex; flex-wrap: wrap; gap: 4px; margin: 4px -10px -6px; padding-top: 6px; border-top: 1px solid var(--border); text-align: left; }
   #users-form + .table-wrap td.act .act-grid { display: contents; }
 }
+/* Yläpalkin oma kuva ja käyttäjäkortti */
+.me-chip {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 8px 4px 4px; margin: 0;
+  background: none; border: 0; border-radius: 999px; color: inherit; font: inherit; cursor: pointer; min-width: 0;
+}
+.me-chip:hover .muted { color: var(--ink); }
+.me-chip:hover .me-avatar { border-color: var(--gold-light); }
+.me-chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.me-chip .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-avatar {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
+  border: 1px solid rgba(210, 175, 87, 0.6); background: #120b09; font: 600 18px/1 var(--font-display); color: var(--gold-light);
+  transition: border-color .15s;
+}
+.me-card { width: min(300px, 100%); cursor: default; }
+.me-card:hover { transform: none; border-color: var(--border); }
+.me-card > .btn { align-self: center; }
+.whoami { min-width: 0; }

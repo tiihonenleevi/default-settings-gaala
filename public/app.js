@@ -12,6 +12,7 @@ let proposing = null;
 let cropping = null;
 // Osallistujan tilastoikkuna (vain admin): palvelimen palauttamat tilastot tai null
 let stats = null;
+let meCard = false; // käyttäjäkortti auki
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -101,7 +102,7 @@ function mainView() {
   return `
   <header class="topbar"><div class="wrap">
     ${brand()}
-    <div class="whoami"><span class="muted">${esc(s.me.name)}${s.me.admin ? ' · admin' : ''}</span><button class="btn btn--ghost" data-act="logout">Kirjaudu ulos</button></div>
+    <div class="whoami">${whoami()}<button class="btn btn--ghost" data-act="logout">Kirjaudu ulos</button></div>
   </div></header>
   ${s.me.tester ? testBar() : ''}
   <main class="wrap">
@@ -116,7 +117,30 @@ function mainView() {
     </footer>
   </main>
   ${cropping ? cropView() : ''}
-  ${stats ? statsView() : ''}`;
+  ${stats ? statsView() : ''}
+  ${meCard && s.me.photo ? meCardView() : ''}`;
+}
+
+// Yläpalkin nimi. Jos käyttäjällä on kuva, sen pyöreä pikkukuva näkyy nimen vieressä
+// ja koko painike avaa käyttäjäkortin (kuva + nimi).
+function whoami() {
+  const me = state.me;
+  const label = `<span class="muted">${esc(me.name)}${me.admin ? ' · admin' : ''}</span>`;
+  if (!me.photo) return label;
+  return `<button class="me-chip" data-act="me-card" title="Näytä oma kortti" aria-label="Näytä oma kortti: ${esc(me.name)}">${portrait(me, 'me-avatar')}${label}</button>`;
+}
+
+// Käyttäjäkortti: sama pystykortti kuin ehdokkailla, rajaus mukana. Sulkeutuu napista, taustasta tai Escillä.
+function meCardView() {
+  const me = state.me;
+  return `
+  <div class="crop-overlay me-overlay" role="dialog" aria-modal="true" aria-labelledby="me-card-h">
+    <article class="nom-card me-card">
+      <div class="nom-media">${portrait(me)}</div>
+      <div class="nom-body"><h2 class="h3" id="me-card-h">${esc(me.name)}</h2></div>
+      <button class="btn btn--sm btn--secondary" data-act="me-close">Sulje</button>
+    </article>
+  </div>`;
 }
 
 function stepper() {
@@ -835,7 +859,11 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (cropping) { cropping = null; render(); } else if (stats) { stats = null; render(); }
+  if (cropping) { cropping = null; render(); } else if (stats) { stats = null; render(); } else if (meCard) { meCard = false; render(); }
+});
+// Käyttäjäkortin tumma tausta sulkee kortin
+document.addEventListener('click', (e) => {
+  if (meCard && e.target.classList && e.target.classList.contains('me-overlay')) { meCard = false; render(); }
 });
 
 // Kuvan valinta: nappi avaa sivun ainoan, pysyvän tiedostokentän (ks. photoInput)
@@ -947,6 +975,8 @@ document.addEventListener('click', async (e) => {
       try { stats = await api('GET', `/api/admin/users/${id}/stats`); render(); } catch {}
       break;
     case 'stats-close': stats = null; render(); break;
+    case 'me-card': meCard = true; render(); document.querySelector('[data-act="me-close"]')?.focus(); break;
+    case 'me-close': meCard = false; render(); document.querySelector('[data-act="me-card"]')?.focus(); break;
     case 'crop-cancel': cropping = null; render(); break;
     case 'crop-reset': cropping.x = 50; cropping.y = 50; cropping.z = 1; applyCropPreview(); break;
     case 'crop-save': {

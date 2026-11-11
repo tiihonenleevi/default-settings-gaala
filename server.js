@@ -279,7 +279,7 @@ function stateFor(user, opts = {}) {
     nextStart: s.nextStart || '',
     phaseEnds: s.phaseEnds || {},
     limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, votesP2: s.votesP2, finalists: s.finalists, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
-    me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, tester: !!user.tester, locked: user.tester ? false : isLocked(user) } : null,
+    me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, tester: !!user.tester, locked: user.tester ? false : isLocked(user), photo: photoOf(user.photo, user.photoCrop) } : null,
   };
   if (!user) return base;
   const uid = user.id;
