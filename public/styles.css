@@ -342,6 +342,7 @@ textarea.input { resize: vertical; min-height: 72px; }
   #users-form + .table-wrap td:nth-child(3) { grid-area: status; text-align: right; color: var(--ink-muted); }
 
   #users-form + .table-wrap td.act { grid-area: act; display: flex; flex-wrap: wrap; gap: 4px; margin: 4px -10px -6px; padding-top: 6px; border-top: 1px solid var(--border); }
+  #users-form + .table-wrap td.act .act-grid { display: contents; }
 
   /* Kategoriat ja ehdokkaat: valinta vasemmalla, nimi, palkki + äänet */
   .table-wrap:has([data-act="advance"]) tbody tr,
@@ -677,3 +678,36 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 .test-waits { align-items: center; }
 .test-waits .btn { min-width: 36px; padding: 0 10px; }
 .next-start + .next-start { margin-top: -4px; }
+/* Osallistujat: leveällä näytöllä toiminnot kahteen sarakkeeseen, jotta kaikki mahtuvat riville */
+.act-grid .act-unlock { color: var(--gold-light); }
+@media (min-width: 921px) {
+  #users-form + .table-wrap th, #users-form + .table-wrap td { padding-inline: 10px; }
+  #users-form + .table-wrap td.act { white-space: normal; }
+  .act-grid { display: grid; grid-template-columns: repeat(2, max-content); gap: 0 2px; }
+  .act-grid .btn { justify-content: flex-start; }
+  .act-grid .act-unlock { grid-column: 1 / -1; }
+}
+/* Kapeammalla (tabletti, puhelin) osallistujat näytetään kortteina kuten puhelimessa */
+@media (max-width: 920px) {
+  #users-form + .table-wrap { overflow: visible; border: 0; background: none; border-radius: 0; }
+  #users-form + .table-wrap table, #users-form + .table-wrap tbody { display: grid; gap: 8px; }
+  #users-form + .table-wrap thead { display: none; }
+  #users-form + .table-wrap tbody tr {
+    display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center;
+    grid-template-areas: "name admin" "code status" "nomin tester" "act act";
+    padding: 14px 16px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md);
+  }
+  #users-form + .table-wrap td { display: block; padding: 0; border: 0; width: auto !important; min-width: 0; }
+  #users-form + .table-wrap td:nth-child(1) { grid-area: name; }
+  #users-form + .table-wrap td:nth-child(2) { grid-area: code; }
+  #users-form + .table-wrap td:nth-child(3) { grid-area: status; text-align: right; color: var(--ink-muted); }
+  #users-form + .table-wrap td:nth-child(4), #users-form + .table-wrap td:nth-child(5), #users-form + .table-wrap td:nth-child(6) { display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-muted); }
+  #users-form + .table-wrap td:nth-child(4) { grid-area: nomin; }
+  #users-form + .table-wrap td:nth-child(4)::before { content: "Ehdokkaana"; }
+  #users-form + .table-wrap td:nth-child(5) { grid-area: tester; justify-content: flex-end; }
+  #users-form + .table-wrap td:nth-child(5)::before { content: "Testi"; }
+  #users-form + .table-wrap td:nth-child(6) { grid-area: admin; justify-content: flex-end; }
+  #users-form + .table-wrap td:nth-child(6)::before { content: "Admin"; }
+  #users-form + .table-wrap td.act { grid-area: act; display: flex; flex-wrap: wrap; gap: 4px; margin: 4px -10px -6px; padding-top: 6px; border-top: 1px solid var(--border); text-align: left; }
+  #users-form + .table-wrap td.act .act-grid { display: contents; }
+}

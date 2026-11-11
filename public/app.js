@@ -672,13 +672,13 @@ function participantsView() {
           <td class="nominable"><input type="checkbox" data-act="user-nominable" data-id="${p.id}" ${p.nominable ? 'checked' : ''} aria-label="Ehdokkaana: ${esc(p.name)}" title="Näkyykö henkilö ehdokaskorteissa"></td>
           <td class="tester"><input type="checkbox" data-act="user-tester" data-id="${p.id}" ${p.tester ? 'checked' : ''} aria-label="Testikäyttäjä: ${esc(p.name)}" title="Testikäyttäjä voi selata kaikkia vaiheita; mitään ei tallenneta"></td>
           <td><input type="checkbox" style="width:18px;height:18px;accent-color:var(--gold)" data-act="user-admin" data-id="${p.id}" ${p.admin ? 'checked' : ''} aria-label="Admin: ${esc(p.name)}"></td>
-          <td class="act">
-            ${p.locked && ph <= 4 ? `<button class="btn btn--ghost" data-act="user-unlock" data-id="${p.id}" data-name="${esc(p.name)}">Avaa lukko</button>` : ''}
+          <td class="act"><div class="act-grid">
             <button class="btn btn--ghost" data-act="user-stats" data-id="${p.id}">Tilastot</button>
             <button class="btn btn--ghost" data-act="copy-link" data-code="${esc(p.code)}" data-name="${esc(p.name)}">Kopioi linkki</button>
             <button class="btn btn--ghost" data-act="user-regen" data-id="${p.id}">Uusi koodi</button>
             <button class="btn btn--ghost" data-act="user-del" data-id="${p.id}">Poista</button>
-          </td>
+            ${p.locked && ph <= 4 ? `<button class="btn btn--ghost act-unlock" data-act="user-unlock" data-id="${p.id}" data-name="${esc(p.name)}">Avaa lukko</button>` : ''}
+          </div></td>
         </tr>`).join('')}</tbody>
     </table></div>
     <p class="small muted" style="margin:0">Linkki kirjaa kaverin sisään suoraan. "Uusi koodi" mitätöi vanhan koodin ja kirjaa kaverin ulos kaikilta laitteilta. Osallistujan kuva näkyy hänen henkilö- ja ehdokaskorteissaan; yksittäiselle ehdokaskortille voi vaihtaa oman kuvan ehdokastaulukosta. Tietokoneella kuvan voi myös raahata suoraan riville.</p>` : '<div class="empty">Ei vielä osallistujia. Lisää kaverien nimet yllä, niin jokainen saa oman koodin.</div>'}
