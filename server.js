@@ -54,7 +54,9 @@ function emptyDb() {
     finalVotes: {},
     finalVoteAt: {}, // milloin finaaliääni annettiin: { userId: { categoryId: aikaleima } }
     feedback: [], // suljetun äänestyksen palautteet: { id, userId, text, createdAt }
-    photoSuggestions: [], // profiilikuvaehdotukset: { id, personId, by, image, createdAt }
+    // Profiilikuvien versiot: kaikki ehdotetut, adminin lisäämät ja aiemmat kuvat säilyvät, ja admin voi vaihtaa niiden välillä.
+    // { id, personId, by, image, crop, source: 'suggestion' | 'admin' | 'previous', withdrawn, createdAt }
+    photoSuggestions: [],
   };
 }
 
@@ -77,6 +79,13 @@ function loadDb() {
   if (!st.phaseScheme) {
     if (st.phase >= 2) st.phase += 1;
     st.phaseScheme = 2;
+  }
+  // Kuvaversiot: nykyiset profiilikuvat mukaan versiolistaan, jotta niihin voi palata
+  data.photoSuggestions = data.photoSuggestions || [];
+  for (const u of Object.values(data.users)) {
+    if (u.photo && !data.photoSuggestions.some((x) => x.personId === u.id && x.image === u.photo)) {
+      data.photoSuggestions.push({ id: newId(), personId: u.id, by: null, image: u.photo, crop: u.photoCrop || null, source: 'previous', createdAt: u.createdAt || now() });
+    }
   }
   return data;
 }
@@ -191,6 +200,22 @@ const imgUrl = (name) => (name ? `/images/${name}` : null);
 
 // Rajaus: kohdistuspiste (x, y prosentteina) ja zoom (1–4). Alkuperäinen kuva säilyy, joten rajausta voi muuttaa myöhemmin.
 const DEFAULT_CROP = { x: 50, y: 50, z: 1 };
+
+// Kuvaversiot (db.photoSuggestions). Profiilikuvaa vaihdettaessa vanha kuva jää versioksi, joten tiedostoja ei poisteta.
+function photoVersionOf(u) { return u.photo ? (db.photoSuggestions || []).find((x) => x.personId === u.id && x.image === u.photo) : null; }
+function keepCurrentPhoto(u) {
+  db.photoSuggestions = db.photoSuggestions || [];
+  const v = photoVersionOf(u);
+  if (v) v.crop = u.photoCrop || null; // nykyinen rajaus talteen, jotta versioon palatessa se säilyy
+  else if (u.photo) db.photoSuggestions.push({ id: newId(), personId: u.id, by: null, image: u.photo, crop: u.photoCrop || null, source: 'previous', createdAt: now() });
+}
+function setProfilePhoto(u, version) {
+  keepCurrentPhoto(u);
+  u.photo = version.image;
+  u.photoCrop = version.crop || null;
+  // Korttien rajaukset koskivat vanhaa kuvaa (jos kortilla ei ole omaa kuvaa)
+  for (const n of db.nominees) if (n.personId === u.id && !n.photo) n.crop = null;
+}
 function cleanCrop(c) {
   const num = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
   return { x: num(c && c.x, 0, 100, 50), y: num(c && c.y, 0, 100, 50), z: num(c && c.z, 1, 4, 1) };
@@ -303,10 +328,16 @@ function stateFor(user, opts = {}) {
     mine: n.by === uid, myVote: myNomVotes.has(n.id), myFinal: myFinal[n.categoryId] === n.id,
   }));
   base.people = people().map((u) => ({ id: u.id, name: u.name, photo: photoOf(u.photo, u.photoCrop) }));
-  // Profiilikuvaehdotukset: osallistuja näkee omansa, admin kaikki ehdottajan nimen kanssa
+  // Kuvaversiot: osallistuja näkee omat ehdotuksensa (ei peruttuja), admin kaikki versiot ehdottajineen
+  const seen = user.photosSeenAt || '';
   base.photoSuggestions = (db.photoSuggestions || [])
-    .filter((x) => db.users[x.personId] && (user.admin || x.by === uid))
-    .map((x) => ({ id: x.id, personId: x.personId, src: imgUrl(x.image), createdAt: x.createdAt, mine: x.by === uid, ...(user.admin ? { byName: userName(x.by) || 'Poistettu osallistuja' } : {}) }));
+    .filter((x) => db.users[x.personId] && (user.admin || (x.by === uid && !x.withdrawn && (x.source || 'suggestion') === 'suggestion')))
+    .map((x) => {
+      const v = { id: x.id, personId: x.personId, src: imgUrl(x.image), createdAt: x.createdAt, mine: x.by === uid, current: db.users[x.personId].photo === x.image };
+      if (user.admin) Object.assign(v, { byName: userName(x.by), source: x.source || 'suggestion', withdrawn: !!x.withdrawn });
+      return v;
+    });
+  if (user.admin) base.photoNew = (db.photoSuggestions || []).filter((x) => db.users[x.personId] && (x.source || 'suggestion') === 'suggestion' && x.by !== uid && !x.withdrawn && x.createdAt > seen).length;
   if (phase === 5) {
     // Muille nimettömänä: kirjoittajaa ei lähetetä selaimeen lainkaan (vain oma-lippu poistoa varten)
     base.feedback = (db.feedback || []).map((f) => ({ id: f.id, text: f.text, createdAt: f.createdAt, mine: f.userId === uid }));
@@ -575,34 +606,45 @@ route('POST', '/api/photo-suggestions', ({ user, body }) => {
   const person = db.users[body.personId];
   if (!person || person.root || person.tester) fail(404, 'Henkilöä ei löydy.');
   db.photoSuggestions = db.photoSuggestions || [];
-  const mine = db.photoSuggestions.filter((x) => x.by === user.id);
+  const mine = db.photoSuggestions.filter((x) => x.by === user.id && !x.withdrawn && (x.source || 'suggestion') === 'suggestion');
   if (mine.filter((x) => x.personId === person.id).length >= SUGG_PER_PERSON) fail(400, `Olet jo ehdottanut ${SUGG_PER_PERSON} kuvaa henkilölle ${person.name}. Poista jokin ensin.`);
   if (mine.length >= SUGG_PER_USER) fail(400, 'Olet ehdottanut jo todella monta kuvaa. Poista jokin ensin.');
   const image = saveImage(body.image);
-  db.photoSuggestions.push({ id: newId(), personId: person.id, by: user.id, image, createdAt: now() });
+  db.photoSuggestions.push({ id: newId(), personId: person.id, by: user.id, image, crop: null, source: 'suggestion', createdAt: now() });
   writeDb();
   return { ...stateFor(user), notice: `Kuvaehdotus lähetetty: ${person.name}.` };
 }, { maxBody: 4.5 * 1024 * 1024 });
 
+// Osallistuja perii oman ehdotuksensa: se katoaa hänen näkymästään, mutta jää adminien versiolistaan.
+// Admin poistaa version pysyvästi (myös tiedoston). Käytössä olevaa kuvaa ei voi poistaa.
 route('DELETE', '/api/photo-suggestions/:id', ({ user, params }) => {
-  const x = (db.photoSuggestions || []).find((y) => y.id === params.id) || fail(404, 'Ehdotusta ei löydy.');
-  if (x.by !== user.id && !user.admin) fail(403, 'Voit poistaa vain omia ehdotuksiasi.');
-  deleteImage(x.image);
-  db.photoSuggestions = db.photoSuggestions.filter((y) => y.id !== x.id);
+  const x = (db.photoSuggestions || []).find((y) => y.id === params.id) || fail(404, 'Kuvaa ei löydy.');
+  const person = db.users[x.personId];
+  if (user.admin) {
+    if (person && person.photo === x.image) fail(400, 'Kuva on käytössä profiilikuvana. Vaihda ensin toinen kuva.');
+    deleteImage(x.image);
+    db.photoSuggestions = db.photoSuggestions.filter((y) => y.id !== x.id);
+  } else {
+    if (x.by !== user.id) fail(403, 'Voit poistaa vain omia ehdotuksiasi.');
+    x.withdrawn = true;
+  }
   writeDb();
-  return { ...stateFor(user), notice: 'Kuvaehdotus poistettu.' };
+  return { ...stateFor(user), notice: user.admin ? 'Kuva poistettu.' : 'Kuvaehdotus poistettu.' };
 });
 
-// Admin ottaa ehdotuksen henkilön profiilikuvaksi (vanha kuva poistetaan, rajaus nollautuu)
+// Admin avasi kuvanäkymän: uusien ehdotusten laskuri nollautuu
+route('POST', '/api/admin/photos-seen', ({ user }) => {
+  user.photosSeenAt = now();
+  writeDb();
+  return stateFor(user);
+}, { admin: true });
+
+// Admin vaihtaa henkilön profiilikuvaksi minkä tahansa version (vanha kuva jää versioksi)
 route('POST', '/api/admin/photo-suggestions/:id/accept', ({ user, params }) => {
-  const x = (db.photoSuggestions || []).find((y) => y.id === params.id) || fail(404, 'Ehdotusta ei löydy.');
+  const x = (db.photoSuggestions || []).find((y) => y.id === params.id) || fail(404, 'Kuvaa ei löydy.');
   const u = db.users[x.personId];
   if (!u || u.root) fail(404, 'Henkilöä ei löydy.');
-  deleteImage(u.photo);
-  u.photo = x.image;
-  u.photoCrop = null;
-  for (const n of db.nominees) if (n.personId === u.id && !n.photo) n.crop = null;
-  db.photoSuggestions = db.photoSuggestions.filter((y) => y.id !== x.id);
+  setProfilePhoto(u, x);
   writeDb();
   return { ...stateFor(user), notice: `Profiilikuva vaihdettu: ${u.name}.` };
 }, { admin: true });
@@ -671,11 +713,9 @@ route('POST', '/api/admin/users/:id/photo', ({ user, params, body }) => {
   const u = db.users[params.id];
   if (!u || u.root) fail(404, 'Osallistujaa ei löydy.');
   const name = saveImage(body.image);
-  deleteImage(u.photo);
-  u.photo = name;
-  u.photoCrop = null;
-  // Korttien rajaukset koskivat vanhaa kuvaa (jos kortilla ei ole omaa kuvaa)
-  for (const n of db.nominees) if (n.personId === u.id && !n.photo) n.crop = null;
+  const version = { id: newId(), personId: u.id, by: user.root ? null : user.id, image: name, crop: null, source: 'admin', createdAt: now() };
+  setProfilePhoto(u, version); // vanha kuva jää versioksi
+  db.photoSuggestions.push(version);
   writeDb();
   return { ...stateFor(user), notice: `Kuva tallennettu: ${u.name}.` };
 }, { admin: true, maxBody: 4.5 * 1024 * 1024 });
@@ -683,7 +723,7 @@ route('POST', '/api/admin/users/:id/photo', ({ user, params, body }) => {
 route('DELETE', '/api/admin/users/:id/photo', ({ user, params }) => {
   const u = db.users[params.id];
   if (!u || u.root) fail(404, 'Osallistujaa ei löydy.');
-  deleteImage(u.photo);
+  keepCurrentPhoto(u); // kuva jää versioksi, josta sen saa takaisin
   u.photo = null;
   u.photoCrop = null;
   writeDb();
@@ -694,6 +734,7 @@ route('POST', '/api/admin/users/:id/crop', ({ user, params, body }) => {
   const u = db.users[params.id];
   if (!u || u.root || !u.photo) fail(404, 'Osallistujalla ei ole kuvaa.');
   u.photoCrop = cleanCrop(body);
+  const v = photoVersionOf(u); if (v) v.crop = u.photoCrop;
   writeDb();
   return { ...stateFor(user), notice: 'Rajaus tallennettu.' };
 }, { admin: true });

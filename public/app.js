@@ -133,44 +133,54 @@ function whoami() {
 
 // Yläpalkin "Ehdota profiilikuvia" -nappi. Adminille näytetään odottavien ehdotusten määrä.
 function suggestButton() {
-  const n = state.me.admin ? (state.photoSuggestions || []).length : 0;
-  return `<button class="btn btn--ghost suggest-btn${photosOpen ? ' is-open' : ''}" data-act="${photosOpen ? 'photos-close' : 'photos-open'}" aria-pressed="${photosOpen}"><span class="long-label">Ehdota profiilikuvia</span><span class="short-label" aria-hidden="true">Ehdota kuvia</span>${n ? ` <span class="count-badge" aria-label="${n} ehdotusta">${n}</span>` : ''}</button>`;
+  const n = state.me.admin ? state.photoNew || 0 : 0; // adminille: uudet ehdotukset edellisen käynnin jälkeen
+  return `<button class="btn btn--ghost suggest-btn${photosOpen ? ' is-open' : ''}" data-act="${photosOpen ? 'photos-close' : 'photos-open'}" aria-pressed="${photosOpen}"><span class="long-label">Ehdota profiilikuvia</span><span class="short-label" aria-hidden="true">Ehdota kuvia</span>${n ? ` <span class="count-badge" aria-label="${n} uutta ehdotusta">${n}</span>` : ''}</button>`;
 }
 
 // Profiilikuvaehdotukset: kaikkien ehdokaskortit. Kuka tahansa voi ehdottaa kuvaa mihin tahansa korttiin.
-// Osallistuja näkee omat ehdotuksensa, admin kaikki ehdottajineen ja voi ottaa kuvan käyttöön tai poistaa sen.
+// Osallistuja näkee omat ehdotuksensa. Admin näkee jokaisen henkilön kaikki kuvaversiot (ehdotukset, hallinnasta
+// lisätyt ja aiemmat profiilikuvat) ja voi vaihtaa profiilikuvan niiden välillä; vanha kuva jää aina talteen.
 function photosView() {
   const s = state; const admin = s.me.admin;
   const all = s.photoSuggestions || [];
-  const people = s.people || [];
+  const people = admin && s.admin ? s.admin.participants.filter((p) => !p.tester) : s.people || [];
+  const who = (x) => {
+    if (!admin) return 'Sinun ehdotuksesi';
+    if (x.source === 'previous') return 'Aiempi profiilikuva';
+    if (x.source === 'admin') return `Lisätty hallinnasta${x.byName ? ` · ${esc(x.byName)}` : ''}`;
+    return `<b>${esc(x.byName || 'Poistettu osallistuja')}</b>`;
+  };
   const item = (x) => `
-    <li class="sugg-item">
+    <li class="sugg-item${x.current ? ' is-current' : ''}">
       <img src="${x.src}" alt="" loading="lazy">
       <div class="sugg-meta">
-        <span class="small">${admin ? `<b>${esc(x.byName || 'sinä')}</b>` : 'Sinun ehdotuksesi'}</span>
-        <span class="small muted">${fmtTime(x.createdAt)}</span>
-        <div class="sugg-actions">
+        <span class="small">${who(x)}</span>
+        <span class="small muted">${fmtTime(x.createdAt)}${x.withdrawn ? ' · ehdottaja perui' : ''}</span>
+        ${x.current ? '<span><span class="tag tag--gold">Käytössä</span></span>' : `<div class="sugg-actions">
           ${admin ? `<button class="btn btn--ghost" data-act="sugg-accept" data-id="${x.id}">Käytä</button>` : ''}
           ${admin || x.mine ? `<button class="btn btn--ghost" data-act="sugg-del" data-id="${x.id}">Poista</button>` : ''}
-        </div>
+        </div>`}
       </div>
     </li>`;
+  // Käytössä oleva ensin, sitten uusimmat
+  const order = (a, b) => (b.current - a.current) || String(b.createdAt).localeCompare(String(a.createdAt));
   return `
   <section class="section photos-view">
     <header class="hero-head screen-center">
       <p class="eyebrow">Profiilikuvat</p>
       <h1 class="h1">Ehdota profiilikuvia</h1>
       <p class="lead">${admin
-        ? 'Kaikki ehdotetut kuvat näkyvät korttien alla ehdottajan nimen kanssa. "Käytä" vaihtaa kuvan henkilön profiilikuvaksi, ja sen jälkeen voit rajata sen.'
+        ? 'Jokaisen kortin alla ovat kaikki henkilön kuvaversiot: ehdotukset, hallinnasta lisätyt ja aiemmat profiilikuvat. "Käytä" vaihtaa profiilikuvan, ja edellinen jää talteen, joten voit vaihtaa takaisin milloin vain.'
         : 'Lähetä kuva, joka sopisi kaverin ehdokaskorttiin. Järjestäjät valitsevat, mitä kuvia käytetään.'}</p>
       <div><button class="btn btn--secondary btn--sm" data-act="photos-close">Takaisin gaalaan</button></div>
     </header>
     ${people.length ? `<div class="nom-grid sugg-grid">
       ${people.map((p) => {
-        const list = all.filter((x) => x.personId === p.id);
+        const list = all.filter((x) => x.personId === p.id).sort(order);
+        const tag = !list.length ? '' : admin ? `${list.length} ${list.length === 1 ? 'kuva' : 'kuvaa'}` : `${list.length} ${list.length === 1 ? 'ehdotus' : 'ehdotusta'}`;
         return `
-        <article class="nom-card sugg-card" data-drop-target="sugg" data-drop-id="${p.id}">
-          <div class="nom-media">${portrait(p)}${list.length ? `<span class="tag nom-tag">${list.length} ${list.length === 1 ? 'ehdotus' : 'ehdotusta'}</span>` : ''}</div>
+        <article class="nom-card sugg-card" id="sugg-${p.id}" data-drop-target="sugg" data-drop-id="${p.id}">
+          <div class="nom-media">${portrait(p)}${tag ? `<span class="tag nom-tag">${tag}</span>` : ''}</div>
           <div class="nom-body"><h3 class="h3">${esc(p.name)}</h3></div>
           ${list.length ? `<ul class="sugg-list">${list.map(item).join('')}</ul>` : ''}
           <button class="btn btn--sm btn--secondary" type="button" data-act="photo-pick" data-target="sugg" data-id="${p.id}">Ehdota kuvaa</button>
@@ -719,6 +729,7 @@ function adminView() {
 
 function participantsView() {
   const a = state.admin; const ph = state.phase;
+  const versions = (id) => (state.photoSuggestions || []).filter((x) => x.personId === id).length;
   const L = state.limits;
   // Käytetyt ehdotukset tai äänet tässä vaiheessa
   const status = (p) => {
@@ -740,7 +751,7 @@ function participantsView() {
       <tbody>${a.participants.map((p) => `
         <tr data-drop-target="user" data-drop-id="${p.id}">
           <td><div class="adm-entry">${portrait(p, 'thumb')}<div><b style="font-weight:500">${esc(p.name)}</b>${p.tester ? ' <span class="tag tag--red">Testi</span>' : ''}${p.joined ? '' : '<div class="small muted">Ei vielä kirjautunut</div>'}
-            <div class="photo-actions">${photoButton('user', p.id, p.photo ? 'Vaihda kuva' : 'Lisää kuva')}${p.photo ? `<button class="btn btn--ghost" data-act="crop-open" data-target="user" data-id="${p.id}">Rajaa</button><button class="btn btn--ghost" data-act="photo-del" data-target="user" data-id="${p.id}">Poista kuva</button>` : ''}</div></div></div></td>
+            <div class="photo-actions">${photoButton('user', p.id, p.photo ? 'Vaihda kuva' : 'Lisää kuva')}${p.photo ? `<button class="btn btn--ghost" data-act="crop-open" data-target="user" data-id="${p.id}">Rajaa</button><button class="btn btn--ghost" data-act="photo-del" data-target="user" data-id="${p.id}">Poista kuva</button>` : ''}${versions(p.id) ? `<button class="btn btn--ghost" data-act="photos-open" data-person="${p.id}">Kuvaversiot (${versions(p.id)})</button>` : ''}</div></div></div></td>
           <td><code class="code">${esc(p.code)}</code></td>
           <td class="small">${ph <= 4 ? status(p) : '–'}${p.locked && ph <= 4 ? ' <span class="tag tag--gold">Lukittu</span>' : ''}</td>
           <td class="nominable"><input type="checkbox" data-act="user-nominable" data-id="${p.id}" ${p.nominable ? 'checked' : ''} aria-label="Ehdokkaana: ${esc(p.name)}" title="Näkyykö henkilö ehdokaskorteissa"></td>
@@ -1025,17 +1036,23 @@ document.addEventListener('click', async (e) => {
       try { stats = await api('GET', `/api/admin/users/${id}/stats`); render(); } catch {}
       break;
     case 'stats-close': stats = null; render(); break;
-    case 'photos-open': photosOpen = true; meCard = false; render(); window.scrollTo(0, 0); break;
+    case 'photos-open': {
+      photosOpen = true; meCard = false; render();
+      const card = t.dataset.person && document.getElementById('sugg-' + t.dataset.person);
+      if (card) card.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0);
+      if (state.me.admin && !isTest() && state.photoNew) api('POST', '/api/admin/photos-seen', {}).catch(() => {});
+      break;
+    }
     case 'photos-close': photosOpen = false; render(); window.scrollTo(0, 0); break;
     case 'sugg-del':
       if (isTest()) { state.photoSuggestions = (state.photoSuggestions || []).filter((x) => x.id !== id); render(); toast('Kuvaehdotus poistettu. (testi)'); break; }
-      if (confirm('Poistetaanko kuvaehdotus?')) await api('DELETE', `/api/photo-suggestions/${id}`, {}).catch(() => {});
+      if (confirm(state.me.admin ? 'Poistetaanko kuva pysyvästi? Sitä ei voi palauttaa.' : 'Poistetaanko kuvaehdotus?')) await api('DELETE', `/api/photo-suggestions/${id}`, {}).catch(() => {});
       break;
     case 'sugg-accept': {
       const x = (state.photoSuggestions || []).find((y) => y.id === id);
       if (!x) break;
-      const who = ((state.people || []).find((p) => p.id === x.personId) || {}).name || 'henkilön';
-      if (!confirm(`Vaihdetaanko tämä kuva henkilön ${who} profiilikuvaksi? Nykyinen kuva korvataan.`)) break;
+      const who = ((state.admin ? state.admin.participants : state.people || []).find((p) => p.id === x.personId) || {}).name || 'henkilön';
+      if (!confirm(`Vaihdetaanko tämä kuva henkilön ${who} profiilikuvaksi? Nykyinen kuva jää talteen versioihin.`)) break;
       try { await api('POST', `/api/admin/photo-suggestions/${id}/accept`, {}); openCrop('user', x.personId); } catch {}
       break;
     }
@@ -1063,7 +1080,7 @@ document.addEventListener('click', async (e) => {
       if (confirm('Poistetaanko palaute pysyvästi?')) await api('DELETE', `/api/feedback/${id}`, {}).catch(() => {});
       break;
     case 'photo-del':
-      if (confirm('Poistetaanko kuva?')) await api('DELETE', `/api/admin/${t.dataset.target === 'user' ? 'users' : 'nominees'}/${id}/photo`, {}).catch(() => {});
+      if (confirm(t.dataset.target === 'user' ? 'Poistetaanko profiilikuva käytöstä? Kuva jää kuvaversioihin, josta sen saa takaisin.' : 'Poistetaanko kuva?')) await api('DELETE', `/api/admin/${t.dataset.target === 'user' ? 'users' : 'nominees'}/${id}/photo`, {}).catch(() => {});
       break;
     case 'auto-advance': await api('POST', '/api/admin/categories/auto-advance', {}).catch(() => {}); break;
     case 'user-regen': if (confirm('Luodaanko uusi koodi? Vanha lakkaa toimimasta heti.')) await api('POST', `/api/admin/users/${id}`, { regenerate: true }).catch(() => {}); break;

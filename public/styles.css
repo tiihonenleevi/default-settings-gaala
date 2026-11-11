@@ -772,3 +772,10 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
   .count-badge { min-width: 18px; height: 18px; padding: 0 5px; }
 }
 .sugg-grid { align-items: flex-start; }
+/* Kuvaversiot */
+.sugg-list { max-height: 440px; overflow-y: auto; overscroll-behavior: contain; }
+.sugg-item.is-current { border-color: rgba(210, 175, 87, 0.6); background: rgba(210, 175, 87, 0.08); }
+.sugg-meta .tag { margin-top: 4px; }
+.sugg-card { scroll-margin-top: 150px; }
+.sugg-actions { margin-left: -6px; gap: 0 4px; }
+.sugg-actions .btn { padding-inline: 6px; }
