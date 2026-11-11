@@ -801,3 +801,10 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 /* Palauteloki vaiheittain */
 .fb-group { display: grid; gap: 8px; }
 .fb-group-h { margin: 6px 0 0; display: flex; align-items: baseline; gap: 10px; font-size: 20px; }
+/* Alle K18 */
+.tag--k18 { border-color: rgba(140, 190, 255, 0.55); color: #cfe2ff; background: rgba(90, 140, 220, 0.16); }
+.sugg-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.sugg-tags .tag { margin: 0; }
+.k18-panel { display: grid; gap: 10px; align-content: start; }
+.k18-btn { justify-self: start; letter-spacing: 0.16em; }
+.k18-panel.is-on { border-color: rgba(210, 175, 87, 0.7); box-shadow: var(--glow-gold); }

@@ -140,6 +140,19 @@ function suggestButton() {
   return `<button class="btn btn--ghost suggest-btn${photosOpen ? ' is-open' : ''}" data-act="${photosOpen ? 'photos-close' : 'photos-open'}" aria-pressed="${photosOpen}"><span class="long-label">Ehdota profiilikuvia</span><span class="short-label" aria-hidden="true">Ehdota kuvia</span>${n ? ` <span class="count-badge" aria-label="${n} uutta ehdotusta">${n}</span>` : ''}</button>`;
 }
 
+// Alle K18 -kytkin: päällä ollessa kaikille näytetään profiilikuvien sijaan erikseen valitut <18-kuvat.
+function k18Panel() {
+  const a = state.admin; const on = !!a.safeMode;
+  const ppl = a.participants.filter((p) => !p.tester); const chosen = ppl.filter((p) => p.safePhoto).length;
+  return `
+      <div class="panel k18-panel${on ? ' is-on' : ''}">
+        <p class="eyebrow">Profiilikuvat</p>
+        <button class="btn ${on ? 'btn--primary' : 'btn--secondary'} k18-btn" data-act="safe-mode" aria-pressed="${on}">ALLE K18 · ${on ? 'PÄÄLLÄ' : 'POIS'}</button>
+        <p class="small muted" style="margin:0">${on ? 'Kaikille näytetään &lt;18-kuvat. Jos &lt;18-kuvaa ei ole valittu, näytetään nimikirjain.' : 'Kun päällä, profiilikuvien tilalla näytetään erikseen valitut &lt;18-kuvat.'} Valittu: <b style="color:var(--gold-light);font-weight:500">${chosen} / ${ppl.length}</b></p>
+        <div><button class="btn btn--ghost" data-act="photos-open">Valitse &lt;18-kuvat</button></div>
+      </div>`;
+}
+
 // Profiilikuvaehdotukset: kaikkien ehdokaskortit. Kuka tahansa voi ehdottaa kuvaa mihin tahansa korttiin.
 // Osallistuja näkee omat ehdotuksensa. Admin näkee jokaisen henkilön kaikki kuvaversiot (ehdotukset, hallinnasta
 // lisätyt ja aiemmat profiilikuvat) ja voi vaihtaa profiilikuvan niiden välillä; vanha kuva jää aina talteen.
@@ -159,10 +172,12 @@ function photosView() {
       <div class="sugg-meta">
         <span class="small">${who(x)}</span>
         <span class="small muted">${fmtTime(x.createdAt)}${x.withdrawn ? ' · ehdottaja perui' : ''}</span>
-        ${x.current ? '<span><span class="tag tag--gold">Käytössä</span></span>' : `<div class="sugg-actions">
-          ${admin ? `<button class="btn btn--ghost" data-act="sugg-accept" data-id="${x.id}">Käytä</button>` : ''}
-          ${admin || x.mine ? `<button class="btn btn--ghost" data-act="sugg-del" data-id="${x.id}">Poista</button>` : ''}
-        </div>`}
+        ${x.current || x.safe ? `<span class="sugg-tags">${x.current ? '<span class="tag tag--gold">Käytössä</span>' : ''}${x.safe ? '<span class="tag tag--k18">&lt;18-kuva</span>' : ''}</span>` : ''}
+        <div class="sugg-actions">
+          ${admin && !x.current ? `<button class="btn btn--ghost" data-act="sugg-accept" data-id="${x.id}">Käytä</button>` : ''}
+          ${admin ? `<button class="btn btn--ghost" data-act="sugg-safe" data-id="${x.id}">${x.safe ? 'Poista &lt;18' : 'Käytä &lt;18'}</button>` : ''}
+          ${(admin || x.mine) && !x.current && !x.safe ? `<button class="btn btn--ghost" data-act="sugg-del" data-id="${x.id}">Poista</button>` : ''}
+        </div>
       </div>
     </li>`;
   // Käytössä oleva ensin, sitten uusimmat
@@ -173,7 +188,7 @@ function photosView() {
       <p class="eyebrow">Profiilikuvat</p>
       <h1 class="h1">Ehdota profiilikuvia</h1>
       <p class="lead">${admin
-        ? 'Avaa kortin "Kuvaversiot" nähdäksesi kaikki henkilön kuvat: ehdotukset, hallinnasta lisätyt ja aiemmat profiilikuvat. Klikkaa kuvaa esikatsellaksesi sitä. "Käytä" vaihtaa profiilikuvan, ja edellinen jää talteen, joten voit vaihtaa takaisin milloin vain.'
+        ? `Avaa kortin "Kuvaversiot" nähdäksesi kaikki henkilön kuvat. Klikkaa kuvaa esikatsellaksesi sitä. "Käytä" vaihtaa normaalin profiilikuvan ja "Käytä &lt;18" valitsee kuvan, joka näytetään Alle K18 -tilassa.${s.admin && s.admin.safeMode ? ' Alle K18 -tila on nyt päällä, joten korteissa näkyvät &lt;18-kuvat.' : ''}`
         : 'Lähetä kuva, joka sopisi kaverin ehdokaskorttiin. Järjestäjät valitsevat, mitä kuvia käytetään.'}</p>
       <div><button class="btn btn--secondary btn--sm" data-act="photos-close">Takaisin gaalaan</button></div>
     </header>
@@ -183,7 +198,7 @@ function photosView() {
         const tag = !list.length ? '' : admin ? `${list.length} ${list.length === 1 ? 'kuva' : 'kuvaa'}` : `${list.length} ${list.length === 1 ? 'ehdotus' : 'ehdotusta'}`;
         return `
         <article class="nom-card sugg-card" id="sugg-${p.id}" data-drop-target="sugg" data-drop-id="${p.id}">
-          <div class="nom-media">${portrait(p)}${tag ? `<span class="tag nom-tag">${tag}</span>` : ''}</div>
+          <div class="nom-media">${portrait('shownPhoto' in p ? { ...p, photo: p.shownPhoto } : p)}${tag ? `<span class="tag nom-tag">${tag}</span>` : ''}</div>
           <div class="nom-body"><h3 class="h3">${esc(p.name)}</h3></div>
           ${list.length ? `<button type="button" class="btn btn--ghost versions-toggle" data-act="versions-toggle" data-id="${p.id}" aria-expanded="${versionsOpen.has(p.id)}" aria-controls="vers-${p.id}">${admin ? 'Kuvaversiot' : 'Omat ehdotukset'} (${list.length}) <span class="chev" aria-hidden="true">${versionsOpen.has(p.id) ? '▴' : '▾'}</span></button>` : ''}
           ${list.length && versionsOpen.has(p.id) ? `<ul class="sugg-list" id="vers-${p.id}">${list.map(item).join('')}</ul>` : ''}
@@ -217,7 +232,7 @@ function versionPreview() {
         ${list.length > 1 ? `<button class="btn btn--ghost preview-nav" data-act="version-step" data-step="-1" aria-label="Edellinen kuva">‹</button>` : ''}
         <div class="crop-previews">
           <article class="nom-card crop-card">
-            <div class="nom-media">${portrait({ name: person.name, photo })}${x.current ? '<span class="tag nom-tag">Käytössä</span>' : ''}</div>
+            <div class="nom-media">${portrait({ name: person.name, photo })}${x.current || x.safe ? `<span class="tag nom-tag">${[x.current ? 'Käytössä' : '', x.safe ? '&lt;18-kuva' : ''].filter(Boolean).join(' · ')}</span>` : ''}</div>
             <div class="nom-body"><h3 class="h3">${esc(person.name)}</h3><p>Ehdokaskortti</p></div>
           </article>
           <figure class="preview-full"><img src="${x.src}" alt="Koko kuva"><figcaption class="small muted">Koko kuva${x.crop ? '' : ' · rajaus säädetään käyttöönoton jälkeen'}</figcaption></figure>
@@ -226,6 +241,7 @@ function versionPreview() {
       </div>
       <div class="row" style="justify-content:center;gap:10px;flex-wrap:wrap">
         ${admin && !x.current ? `<button class="btn btn--primary btn--sm" data-act="sugg-accept" data-id="${x.id}">Käytä tätä kuvaa</button>` : ''}
+        ${admin ? `<button class="btn btn--secondary btn--sm" data-act="sugg-safe" data-id="${x.id}">${x.safe ? 'Poista &lt;18-valinta' : 'Käytä &lt;18-kuvana'}</button>` : ''}
         <button class="btn btn--secondary btn--sm" data-act="preview-close">Sulje</button>
       </div>
     </div>
@@ -693,6 +709,7 @@ function adminView() {
         <p class="small muted" style="margin:0">Osallistuneita: ehdotukset – ${a.voters.p1}, kategoria-äänestys – ${a.voters.p2}, ehdokkaat – ${a.voters.p3}, finaali – ${a.voters.p4}</p>
         ${s.phase <= 4 ? `<p class="small" style="margin:0">Lukinneet tässä vaiheessa: <b style="color:var(--gold-light);font-weight:500">${a.locked} / ${a.participants.filter((p) => !p.tester).length}</b></p>` : ''}
       </div>
+      ${k18Panel()}
     </div>
 
     ${participantsView()}
@@ -793,8 +810,8 @@ function participantsView() {
       <thead><tr><th>Nimi</th><th>Koodi</th><th>${ph >= 4 ? 'Finaali' : 'Vaihe ' + ph} · käytetty</th><th>Ehdokkaana</th><th>Testi</th><th>Admin</th><th></th></tr></thead>
       <tbody>${a.participants.map((p) => `
         <tr data-drop-target="user" data-drop-id="${p.id}">
-          <td><div class="adm-entry">${portrait(p, 'thumb')}<div><b style="font-weight:500">${esc(p.name)}</b>${p.tester ? ' <span class="tag tag--red">Testi</span>' : ''}${p.joined ? '' : '<div class="small muted">Ei vielä kirjautunut</div>'}
-            <div class="photo-actions">${photoButton('user', p.id, p.photo ? 'Vaihda kuva' : 'Lisää kuva')}${p.photo ? `<button class="btn btn--ghost" data-act="crop-open" data-target="user" data-id="${p.id}">Rajaa</button><button class="btn btn--ghost" data-act="photo-del" data-target="user" data-id="${p.id}">Poista kuva</button>` : ''}${versions(p.id) ? `<button class="btn btn--ghost" data-act="photos-open" data-person="${p.id}">Kuvaversiot (${versions(p.id)})</button>` : ''}</div></div></div></td>
+          <td><div class="adm-entry">${portrait({ ...p, photo: p.shownPhoto }, 'thumb')}<div><b style="font-weight:500">${esc(p.name)}</b>${p.tester ? ' <span class="tag tag--red">Testi</span>' : ''}${p.joined ? '' : '<div class="small muted">Ei vielä kirjautunut</div>'}
+            <div class="photo-actions">${photoButton('user', p.id, p.photo ? 'Vaihda kuva' : 'Lisää kuva')}${p.photo ? `<button class="btn btn--ghost" data-act="crop-open" data-target="user" data-id="${p.id}">Rajaa</button><button class="btn btn--ghost" data-act="photo-del" data-target="user" data-id="${p.id}">Poista kuva</button>` : ''}${p.safePhoto ? `<button class="btn btn--ghost" data-act="crop-open" data-target="safe" data-id="${p.id}">Rajaa &lt;18</button><button class="btn btn--ghost" data-act="safe-del" data-id="${p.id}">Poista &lt;18</button>` : ''}${versions(p.id) ? `<button class="btn btn--ghost" data-act="photos-open" data-person="${p.id}">Kuvaversiot (${versions(p.id)})</button>` : ''}</div></div></div></td>
           <td><code class="code">${esc(p.code)}</code></td>
           <td class="small">${ph <= 4 ? status(p) : '–'}${p.locked && ph <= 4 ? ' <span class="tag tag--gold">Lukittu</span>' : ''}</td>
           <td class="nominable"><input type="checkbox" data-act="user-nominable" data-id="${p.id}" ${p.nominable ? 'checked' : ''} aria-label="Ehdokkaana: ${esc(p.name)}" title="Näkyykö henkilö ehdokaskorteissa"></td>
@@ -911,9 +928,10 @@ function statsView() {
 // Vedä kuvaa siirtääksesi kohdistuspistettä, liukusäädin zoomaa. Esikatselu näyttää ehdokaskortin ja henkilökortin.
 function openCrop(target, id) {
   const a = state.admin;
-  const item = target === 'user' ? a.participants.find((p) => p.id === id) : a.nominees.find((n) => n.id === id);
-  if (!item || !item.photo) return;
-  cropping = { target, id, src: item.photo.src, x: item.photo.x, y: item.photo.y, z: item.photo.z, name: item.name, reason: item.reason || '' };
+  const item = target === 'user' || target === 'safe' ? a.participants.find((p) => p.id === id) : a.nominees.find((n) => n.id === id);
+  const ph = item && (target === 'safe' ? item.safePhoto : item.photo);
+  if (!ph) return;
+  cropping = { target, id, src: ph.src, x: ph.x, y: ph.y, z: ph.z, name: item.name, reason: item.reason || '' };
   render();
 }
 
@@ -922,7 +940,7 @@ function cropView() {
   return `
   <div class="crop-overlay" role="dialog" aria-modal="true" aria-labelledby="crop-h">
     <div class="crop-dialog panel">
-      <p class="eyebrow" id="crop-h">Rajaa kuva · ${esc(c.name)}</p>
+      <p class="eyebrow" id="crop-h">Rajaa ${c.target === 'safe' ? '&lt;18-kuva' : 'kuva'} · ${esc(c.name)}</p>
       <p class="small muted" style="margin:0">Vedä kuvaa siirtääksesi, zoomaa liukusäätimellä. Esikatselu näyttää kortin sellaisena kuin osallistujat sen näkevät.</p>
       <div class="crop-previews">
         <article class="nom-card crop-card">
@@ -1097,6 +1115,27 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'photos-close': photosOpen = false; previewVersion = null; render(); window.scrollTo(0, 0); break;
+    case 'sugg-safe': {
+      const x = (state.photoSuggestions || []).find((y) => y.id === id);
+      if (!x) break;
+      try {
+        await api('POST', `/api/admin/photo-suggestions/${id}/safe`, {});
+        if (!x.safe) { previewVersion = null; openCrop('safe', x.personId); } // valittiin: heti rajaukseen
+      } catch {}
+      break;
+    }
+    case 'safe-del':
+      if (confirm('Poistetaanko <18-kuvan valinta? Kuva jää kuvaversioihin.')) await api('DELETE', `/api/admin/users/${id}/safe-photo`, {}).catch(() => {});
+      break;
+    case 'safe-mode': {
+      const on = !state.admin.safeMode;
+      const a = state.admin; const missing = a.participants.filter((p) => !p.tester && !p.safePhoto).length;
+      if (!confirm(on
+        ? `Otetaanko Alle K18 -tila käyttöön? Kaikille näytetään profiilikuvien sijaan <18-kuvat.${missing ? ` ${missing} osallistujalla ei ole <18-kuvaa, joten heille näytetään nimikirjain.` : ''}`
+        : 'Poistetaanko Alle K18 -tila käytöstä? Normaalit profiilikuvat palaavat käyttöön.')) break;
+      await api('POST', '/api/admin/settings', { safeMode: on }).then(() => toast(on ? 'Alle K18 -tila päällä.' : 'Alle K18 -tila pois päältä.')).catch(() => {});
+      break;
+    }
     case 'versions-toggle':
       if (versionsOpen.has(id)) versionsOpen.delete(id); else versionsOpen.add(id);
       render(); document.querySelector(`[data-act="versions-toggle"][data-id="${id}"]`)?.focus();
@@ -1133,7 +1172,7 @@ document.addEventListener('click', async (e) => {
     case 'crop-reset': cropping.x = 50; cropping.y = 50; cropping.z = 1; applyCropPreview(); break;
     case 'crop-save': {
       const c = cropping;
-      await api('POST', `/api/admin/${c.target === 'user' ? 'users' : 'nominees'}/${c.id}/crop`, { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 100) / 100 })
+      await api('POST', c.target === 'safe' ? `/api/admin/users/${c.id}/safe-crop` : `/api/admin/${c.target === 'user' ? 'users' : 'nominees'}/${c.id}/crop`, { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 100) / 100 })
         .then(() => { cropping = null; render(); }).catch(() => {});
       break;
     }

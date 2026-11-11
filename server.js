@@ -238,7 +238,14 @@ function serveImage(req, res, pathname) {
 const people = () => Object.values(db.users).filter((u) => !u.root && !u.tester && u.nominable !== false).sort((a, b) => a.name.localeCompare(b.name, 'fi'));
 const nomName = (n) => (n.personId && db.users[n.personId] ? db.users[n.personId].name : n.name);
 // Kortin oma kuva voittaa; muuten henkilön kuva. Kortin oma rajaus voittaa henkilön rajauksen.
+// "Alle K18" -tila: kaikkialla näytetään henkilön erikseen valittu <18-kuva. Jos sitä ei ole valittu, näytetään
+// nimikirjain (ei normaalia kuvaa). Ehdokaskorttien omat kuvat ohitetaan tässä tilassa.
+function displayPhoto(u) {
+  if (!u) return null;
+  return db.settings.safeMode ? photoOf(u.safePhoto, u.safePhotoCrop) : photoOf(u.photo, u.photoCrop);
+}
 function nomPhoto(n) {
+  if (db.settings.safeMode) return displayPhoto(n.personId && db.users[n.personId]);
   if (n.photo) return photoOf(n.photo, n.crop);
   const p = n.personId && db.users[n.personId];
   return p && p.photo ? photoOf(p.photo, n.crop || p.photoCrop) : null;
@@ -305,7 +312,7 @@ function stateFor(user, opts = {}) {
     nextStart: s.nextStart || '',
     phaseEnds: s.phaseEnds || {},
     limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, votesP2: s.votesP2, finalists: s.finalists, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
-    me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, tester: !!user.tester, locked: user.tester ? false : isLocked(user), photo: photoOf(user.photo, user.photoCrop) } : null,
+    me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, tester: !!user.tester, locked: user.tester ? false : isLocked(user), photo: displayPhoto(user) } : null,
   };
   if (!user) return base;
   const uid = user.id;
@@ -327,14 +334,14 @@ function stateFor(user, opts = {}) {
     id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), finalist: !!n.finalist,
     mine: n.by === uid, myVote: myNomVotes.has(n.id), myFinal: myFinal[n.categoryId] === n.id,
   }));
-  base.people = people().map((u) => ({ id: u.id, name: u.name, photo: photoOf(u.photo, u.photoCrop) }));
+  base.people = people().map((u) => ({ id: u.id, name: u.name, photo: displayPhoto(u) }));
   // Kuvaversiot: osallistuja näkee omat ehdotuksensa (ei peruttuja), admin kaikki versiot ehdottajineen
   const seen = user.photosSeenAt || '';
   base.photoSuggestions = (db.photoSuggestions || [])
     .filter((x) => db.users[x.personId] && (user.admin || (x.by === uid && !x.withdrawn && (x.source || 'suggestion') === 'suggestion')))
     .map((x) => {
       const v = { id: x.id, personId: x.personId, src: imgUrl(x.image), crop: x.crop || null, createdAt: x.createdAt, mine: x.by === uid, current: db.users[x.personId].photo === x.image };
-      if (user.admin) Object.assign(v, { byName: userName(x.by), source: x.source || 'suggestion', withdrawn: !!x.withdrawn });
+      if (user.admin) Object.assign(v, { byName: userName(x.by), source: x.source || 'suggestion', withdrawn: !!x.withdrawn, safe: db.users[x.personId].safePhoto === x.image });
       return v;
     });
   if (user.admin) base.photoNew = (db.photoSuggestions || []).filter((x) => db.users[x.personId] && (x.source || 'suggestion') === 'suggestion' && x.by !== uid && !x.withdrawn && x.createdAt > seen).length;
@@ -383,7 +390,7 @@ function adminView() {
   const fin = finalCounts();
   return {
     participants: Object.values(db.users).filter((u) => !u.root).map((u) => ({
-      id: u.id, name: u.name, code: fmtCode(u.code), admin: !!u.admin, joined: !!u.lastLogin, photo: photoOf(u.photo, u.photoCrop), nominable: u.nominable !== false, tester: !!u.tester,
+      id: u.id, name: u.name, code: fmtCode(u.code), admin: !!u.admin, joined: !!u.lastLogin, photo: photoOf(u.photo, u.photoCrop), safePhoto: photoOf(u.safePhoto, u.safePhotoCrop), shownPhoto: displayPhoto(u), nominable: u.nominable !== false, tester: !!u.tester,
       p1: db.categories.filter((c) => c.by === u.id).length,
       p2: db.catVotes.filter((v) => v.userId === u.id).length,
       p3: db.nomVotes.filter((v) => v.userId === u.id).length,
@@ -393,6 +400,7 @@ function adminView() {
     categories: db.categories.map((c) => ({ id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, votes: catCounts[c.id] || 0, byName: userName(c.by) })),
     nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), ownPhoto: !!n.photo, finalist: !!n.finalist, votes: nomCounts[n.id] || 0, finalVotes: fin[n.id] || 0, byName: userName(n.by),
       finalVoters: db.settings.phase >= 4 ? Object.entries(db.finalVotes).filter(([, v]) => v[n.categoryId] === n.id).map(([uid]) => userName(uid) || 'poistettu').sort((a, b) => a.localeCompare(b, 'fi')) : [] })),
+    safeMode: !!db.settings.safeMode,
     nomVoteNeed: nomVoteNeed(null).reduce((sum, x) => sum + x.need, 0),
     voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nomVotes.map((v) => v.userId)).size, p4: Object.keys(db.finalVotes).length },
     locked: Object.values(db.users).filter((u) => !u.root && !u.tester && isLocked(u)).length,
@@ -625,6 +633,7 @@ route('DELETE', '/api/photo-suggestions/:id', ({ user, params }) => {
   const person = db.users[x.personId];
   if (user.admin) {
     if (person && person.photo === x.image) fail(400, 'Kuva on käytössä profiilikuvana. Vaihda ensin toinen kuva.');
+    if (person && person.safePhoto === x.image) fail(400, 'Kuva on valittu <18-kuvaksi. Poista valinta ensin.');
     deleteImage(x.image);
     db.photoSuggestions = db.photoSuggestions.filter((y) => y.id !== x.id);
   } else {
@@ -650,6 +659,34 @@ route('POST', '/api/admin/photo-suggestions/:id/accept', ({ user, params }) => {
   setProfilePhoto(u, x);
   writeDb();
   return { ...stateFor(user), notice: `Profiilikuva vaihdettu: ${u.name}.` };
+}, { admin: true });
+
+// <18-kuva: admin valitsee version, joka näytetään "Alle K18" -tilassa. Uudelleen valinta poistaa valinnan.
+route('POST', '/api/admin/photo-suggestions/:id/safe', ({ user, params }) => {
+  const x = (db.photoSuggestions || []).find((y) => y.id === params.id) || fail(404, 'Kuvaa ei löydy.');
+  const u = db.users[x.personId];
+  if (!u || u.root) fail(404, 'Henkilöä ei löydy.');
+  if (u.safePhoto === x.image) { u.safePhoto = null; u.safePhotoCrop = null; writeDb(); return { ...stateFor(user), notice: `<18-kuva poistettu: ${u.name}.` }; }
+  u.safePhoto = x.image;
+  u.safePhotoCrop = x.crop || null;
+  writeDb();
+  return { ...stateFor(user), notice: `<18-kuva valittu: ${u.name}.` };
+}, { admin: true });
+
+route('DELETE', '/api/admin/users/:id/safe-photo', ({ user, params }) => {
+  const u = db.users[params.id];
+  if (!u || u.root) fail(404, 'Osallistujaa ei löydy.');
+  u.safePhoto = null; u.safePhotoCrop = null;
+  writeDb();
+  return stateFor(user);
+}, { admin: true });
+
+route('POST', '/api/admin/users/:id/safe-crop', ({ user, params, body }) => {
+  const u = db.users[params.id];
+  if (!u || u.root || !u.safePhoto) fail(404, 'Osallistujalla ei ole <18-kuvaa.');
+  u.safePhotoCrop = cleanCrop(body);
+  writeDb();
+  return { ...stateFor(user), notice: '<18-kuvan rajaus tallennettu.' };
 }, { admin: true });
 
 // Koko gaalan nollaus. Vaatii vahvistussanan, ja nykyinen tietokanta tallennetaan ensin varmuuskopioksi
@@ -804,6 +841,7 @@ route('POST', '/api/admin/settings', ({ user, body }) => {
   const s = db.settings;
   if ('deadline' in body) s.deadline = clean(body.deadline, 80);
   if ('nextStart' in body) s.nextStart = clean(body.nextStart, 80);
+  if ('safeMode' in body) s.safeMode = !!body.safeMode;
   if (body.phaseEnds && typeof body.phaseEnds === 'object') {
     const ends = {};
     for (const p of [1, 2, 3, 4]) {
