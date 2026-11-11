@@ -13,6 +13,7 @@ let cropping = null;
 // Osallistujan tilastoikkuna (vain admin): palvelimen palauttamat tilastot tai null
 let stats = null;
 let meCard = false; // käyttäjäkortti auki
+let photosOpen = false; // "Ehdota profiilikuvia" -näkymä auki
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -102,10 +103,10 @@ function mainView() {
   return `
   <header class="topbar"><div class="wrap">
     ${brand()}
-    <div class="whoami">${whoami()}<button class="btn btn--ghost" data-act="logout">Kirjaudu ulos</button></div>
+    <div class="whoami">${suggestButton()}${whoami()}<button class="btn btn--ghost" data-act="logout">Kirjaudu ulos</button></div>
   </div></header>
   ${s.me.tester ? testBar() : ''}
-  <main class="wrap">
+  ${photosOpen ? `<main class="wrap">${photosView()}<footer class="footer"><span>Default Settings Gaala</span></footer></main>` : `<main class="wrap">
     <section class="hero">
       ${stepper()}
       ${isWaiting() ? '' : phaseHero()}
@@ -115,7 +116,7 @@ function mainView() {
     <footer class="footer">
       <span>Default Settings Gaala</span>
     </footer>
-  </main>
+  </main>`}
   ${cropping ? cropView() : ''}
   ${stats ? statsView() : ''}
   ${meCard && s.me.photo ? meCardView() : ''}`;
@@ -128,6 +129,55 @@ function whoami() {
   const label = `<span class="muted">${esc(me.name)}${me.admin ? ' · admin' : ''}</span>`;
   if (!me.photo) return label;
   return `<button class="me-chip" data-act="me-card" title="Näytä oma kortti" aria-label="Näytä oma kortti: ${esc(me.name)}">${portrait(me, 'me-avatar')}${label}</button>`;
+}
+
+// Yläpalkin "Ehdota profiilikuvia" -nappi. Adminille näytetään odottavien ehdotusten määrä.
+function suggestButton() {
+  const n = state.me.admin ? (state.photoSuggestions || []).length : 0;
+  return `<button class="btn btn--ghost suggest-btn${photosOpen ? ' is-open' : ''}" data-act="${photosOpen ? 'photos-close' : 'photos-open'}" aria-pressed="${photosOpen}"><span class="long-label">Ehdota profiilikuvia</span><span class="short-label" aria-hidden="true">Ehdota kuvia</span>${n ? ` <span class="count-badge" aria-label="${n} ehdotusta">${n}</span>` : ''}</button>`;
+}
+
+// Profiilikuvaehdotukset: kaikkien ehdokaskortit. Kuka tahansa voi ehdottaa kuvaa mihin tahansa korttiin.
+// Osallistuja näkee omat ehdotuksensa, admin kaikki ehdottajineen ja voi ottaa kuvan käyttöön tai poistaa sen.
+function photosView() {
+  const s = state; const admin = s.me.admin;
+  const all = s.photoSuggestions || [];
+  const people = s.people || [];
+  const item = (x) => `
+    <li class="sugg-item">
+      <img src="${x.src}" alt="" loading="lazy">
+      <div class="sugg-meta">
+        <span class="small">${admin ? `<b>${esc(x.byName || 'sinä')}</b>` : 'Sinun ehdotuksesi'}</span>
+        <span class="small muted">${fmtTime(x.createdAt)}</span>
+        <div class="sugg-actions">
+          ${admin ? `<button class="btn btn--ghost" data-act="sugg-accept" data-id="${x.id}">Käytä</button>` : ''}
+          ${admin || x.mine ? `<button class="btn btn--ghost" data-act="sugg-del" data-id="${x.id}">Poista</button>` : ''}
+        </div>
+      </div>
+    </li>`;
+  return `
+  <section class="section photos-view">
+    <header class="hero-head screen-center">
+      <p class="eyebrow">Profiilikuvat</p>
+      <h1 class="h1">Ehdota profiilikuvia</h1>
+      <p class="lead">${admin
+        ? 'Kaikki ehdotetut kuvat näkyvät korttien alla ehdottajan nimen kanssa. "Käytä" vaihtaa kuvan henkilön profiilikuvaksi, ja sen jälkeen voit rajata sen.'
+        : 'Lähetä kuva, joka sopisi kaverin ehdokaskorttiin. Järjestäjät valitsevat, mitä kuvia käytetään.'}</p>
+      <div><button class="btn btn--secondary btn--sm" data-act="photos-close">Takaisin gaalaan</button></div>
+    </header>
+    ${people.length ? `<div class="nom-grid sugg-grid">
+      ${people.map((p) => {
+        const list = all.filter((x) => x.personId === p.id);
+        return `
+        <article class="nom-card sugg-card" data-drop-target="sugg" data-drop-id="${p.id}">
+          <div class="nom-media">${portrait(p)}${list.length ? `<span class="tag nom-tag">${list.length} ${list.length === 1 ? 'ehdotus' : 'ehdotusta'}</span>` : ''}</div>
+          <div class="nom-body"><h3 class="h3">${esc(p.name)}</h3></div>
+          ${list.length ? `<ul class="sugg-list">${list.map(item).join('')}</ul>` : ''}
+          <button class="btn btn--sm btn--secondary" type="button" data-act="photo-pick" data-target="sugg" data-id="${p.id}">Ehdota kuvaa</button>
+        </article>`;
+      }).join('')}
+    </div>` : '<div class="empty">Ei vielä ehdokkaita.</div>'}
+  </section>`;
 }
 
 // Käyttäjäkortti: sama pystykortti kuin ehdokkailla, rajaus mukana. Sulkeutuu napista, taustasta tai Escillä.
@@ -975,6 +1025,20 @@ document.addEventListener('click', async (e) => {
       try { stats = await api('GET', `/api/admin/users/${id}/stats`); render(); } catch {}
       break;
     case 'stats-close': stats = null; render(); break;
+    case 'photos-open': photosOpen = true; meCard = false; render(); window.scrollTo(0, 0); break;
+    case 'photos-close': photosOpen = false; render(); window.scrollTo(0, 0); break;
+    case 'sugg-del':
+      if (isTest()) { state.photoSuggestions = (state.photoSuggestions || []).filter((x) => x.id !== id); render(); toast('Kuvaehdotus poistettu. (testi)'); break; }
+      if (confirm('Poistetaanko kuvaehdotus?')) await api('DELETE', `/api/photo-suggestions/${id}`, {}).catch(() => {});
+      break;
+    case 'sugg-accept': {
+      const x = (state.photoSuggestions || []).find((y) => y.id === id);
+      if (!x) break;
+      const who = ((state.people || []).find((p) => p.id === x.personId) || {}).name || 'henkilön';
+      if (!confirm(`Vaihdetaanko tämä kuva henkilön ${who} profiilikuvaksi? Nykyinen kuva korvataan.`)) break;
+      try { await api('POST', `/api/admin/photo-suggestions/${id}/accept`, {}); openCrop('user', x.personId); } catch {}
+      break;
+    }
     case 'me-card': meCard = true; render(); document.querySelector('[data-act="me-close"]')?.focus(); break;
     case 'me-close': meCard = false; render(); document.querySelector('[data-act="me-card"]')?.focus(); break;
     case 'crop-cancel': cropping = null; render(); break;
@@ -1049,7 +1113,7 @@ const PHOTO_ACCEPT = APPLE_WEBKIT ? 'image/*' : 'image/*,.heic,.heif';
 // Yksi pysyvä tiedostokenttä #app-alueen ulkopuolella. Sivu piirretään taustalla uudelleen 15 s välein ja
 // kun välilehti palaa näkyviin (esim. iPhonen kuvavalitsimen sulkeutuessa). Jos kenttä olisi näkymän sisällä,
 // valittu kuva palautuisi jo poistetulle kentälle ja katoaisi. Tätä kenttää uudelleenpiirto ei koske.
-let uploadTarget = null; // { target: 'user' | 'nom', id }
+let uploadTarget = null; // { target: 'user' | 'nom' | 'sugg', id }
 const photoInput = document.createElement('input');
 photoInput.type = 'file';
 photoInput.accept = PHOTO_ACCEPT;
@@ -1078,6 +1142,15 @@ async function uploadPhoto(tgt, file, via) {
     toast('Ladataan kuvaa…');
     const image = await imageToDataUrl(file, 1400, (d) => { meta.dims = d; });
     stage = 'lähetys';
+    if (tgt.target === 'sugg') {
+      if (isTest()) { // testikäyttäjä: kuva näkyy vain omassa selaimessa
+        state.photoSuggestions = [...(state.photoSuggestions || []), { id: 'test-' + Date.now(), personId: tgt.id, src: image, createdAt: new Date().toISOString(), mine: true, byName: state.me.name }];
+        render(); toast('Kuvaehdotus lisätty. (testi, ei tallennettu)'); return;
+      }
+      await api('POST', '/api/photo-suggestions', { personId: tgt.id, image });
+      if (state.me.admin) uploadLog({ ...meta, result: 'onnistui', stage: `${via}/ehdotus` });
+      return;
+    }
     await api('POST', `/api/admin/${tgt.target === 'user' ? 'users' : 'nominees'}/${tgt.id}/photo`, { image });
     uploadLog({ ...meta, result: 'onnistui', stage: via });
     openCrop(tgt.target, tgt.id); // heti rajaukseen ja esikatseluun
@@ -1103,7 +1176,7 @@ document.addEventListener('drop', (e) => {
   document.querySelectorAll('.drop-hover').forEach((el) => el.classList.remove('drop-hover'));
   const zone = e.target.closest && e.target.closest('[data-drop-target]');
   const file = e.dataTransfer.files && e.dataTransfer.files[0];
-  if (!zone || !file) { if (file) toast('Pudota kuva osallistujan tai ehdokkaan riville.', true); return; }
+  if (!zone || !file) { if (file) toast('Pudota kuva kortin tai rivin päälle.', true); return; }
   uploadPhoto({ target: zone.dataset.dropTarget, id: zone.dataset.dropId }, file, 'raahaus');
 });
 

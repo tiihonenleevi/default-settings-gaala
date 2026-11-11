@@ -54,6 +54,7 @@ function emptyDb() {
     finalVotes: {},
     finalVoteAt: {}, // milloin finaaliääni annettiin: { userId: { categoryId: aikaleima } }
     feedback: [], // suljetun äänestyksen palautteet: { id, userId, text, createdAt }
+    photoSuggestions: [], // profiilikuvaehdotukset: { id, personId, by, image, createdAt }
   };
 }
 
@@ -302,6 +303,10 @@ function stateFor(user, opts = {}) {
     mine: n.by === uid, myVote: myNomVotes.has(n.id), myFinal: myFinal[n.categoryId] === n.id,
   }));
   base.people = people().map((u) => ({ id: u.id, name: u.name, photo: photoOf(u.photo, u.photoCrop) }));
+  // Profiilikuvaehdotukset: osallistuja näkee omansa, admin kaikki ehdottajan nimen kanssa
+  base.photoSuggestions = (db.photoSuggestions || [])
+    .filter((x) => db.users[x.personId] && (user.admin || x.by === uid))
+    .map((x) => ({ id: x.id, personId: x.personId, src: imgUrl(x.image), createdAt: x.createdAt, mine: x.by === uid, ...(user.admin ? { byName: userName(x.by) || 'Poistettu osallistuja' } : {}) }));
   if (phase === 5) {
     // Muille nimettömänä: kirjoittajaa ei lähetetä selaimeen lainkaan (vain oma-lippu poistoa varten)
     base.feedback = (db.feedback || []).map((f) => ({ id: f.id, text: f.text, createdAt: f.createdAt, mine: f.userId === uid }));
@@ -561,6 +566,47 @@ route('DELETE', '/api/feedback/:id', ({ user, params }) => {
   return stateFor(user);
 }, { admin: true });
 
+// ---------- Profiilikuvaehdotukset ----------
+// Kuka tahansa kirjautunut voi ehdottaa kuvaa kenen tahansa ehdokaskorttiin; adminit näkevät kaikki ehdotukset
+// ja voivat ottaa ehdotuksen henkilön profiilikuvaksi tai poistaa sen. Ehdottaja voi poistaa omansa.
+const SUGG_PER_PERSON = 5, SUGG_PER_USER = 40;
+route('POST', '/api/photo-suggestions', ({ user, body }) => {
+  if (user.tester) fail(403, 'Testikäyttäjä: muutoksia ei tallenneta.');
+  const person = db.users[body.personId];
+  if (!person || person.root || person.tester) fail(404, 'Henkilöä ei löydy.');
+  db.photoSuggestions = db.photoSuggestions || [];
+  const mine = db.photoSuggestions.filter((x) => x.by === user.id);
+  if (mine.filter((x) => x.personId === person.id).length >= SUGG_PER_PERSON) fail(400, `Olet jo ehdottanut ${SUGG_PER_PERSON} kuvaa henkilölle ${person.name}. Poista jokin ensin.`);
+  if (mine.length >= SUGG_PER_USER) fail(400, 'Olet ehdottanut jo todella monta kuvaa. Poista jokin ensin.');
+  const image = saveImage(body.image);
+  db.photoSuggestions.push({ id: newId(), personId: person.id, by: user.id, image, createdAt: now() });
+  writeDb();
+  return { ...stateFor(user), notice: `Kuvaehdotus lähetetty: ${person.name}.` };
+}, { maxBody: 4.5 * 1024 * 1024 });
+
+route('DELETE', '/api/photo-suggestions/:id', ({ user, params }) => {
+  const x = (db.photoSuggestions || []).find((y) => y.id === params.id) || fail(404, 'Ehdotusta ei löydy.');
+  if (x.by !== user.id && !user.admin) fail(403, 'Voit poistaa vain omia ehdotuksiasi.');
+  deleteImage(x.image);
+  db.photoSuggestions = db.photoSuggestions.filter((y) => y.id !== x.id);
+  writeDb();
+  return { ...stateFor(user), notice: 'Kuvaehdotus poistettu.' };
+});
+
+// Admin ottaa ehdotuksen henkilön profiilikuvaksi (vanha kuva poistetaan, rajaus nollautuu)
+route('POST', '/api/admin/photo-suggestions/:id/accept', ({ user, params }) => {
+  const x = (db.photoSuggestions || []).find((y) => y.id === params.id) || fail(404, 'Ehdotusta ei löydy.');
+  const u = db.users[x.personId];
+  if (!u || u.root) fail(404, 'Henkilöä ei löydy.');
+  deleteImage(u.photo);
+  u.photo = x.image;
+  u.photoCrop = null;
+  for (const n of db.nominees) if (n.personId === u.id && !n.photo) n.crop = null;
+  db.photoSuggestions = db.photoSuggestions.filter((y) => y.id !== x.id);
+  writeDb();
+  return { ...stateFor(user), notice: `Profiilikuva vaihdettu: ${u.name}.` };
+}, { admin: true });
+
 // Koko gaalan nollaus. Vaatii vahvistussanan, ja nykyinen tietokanta tallennetaan ensin varmuuskopioksi
 // data-kansioon. Kuvatiedostoja ei poisteta, jotta varmuuskopion palautus toimii kuvineen.
 route('POST', '/api/admin/reset', ({ user, body }) => {
@@ -573,6 +619,7 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
   db.settings.phase = 1; db.settings.deadline = ''; db.settings.nextStart = ''; db.settings.phaseEnds = {};
   for (const u of Object.values(db.users)) u.locked = {};
   if (body.users) for (const u of Object.values(db.users)) if (!u.root) delete db.users[u.id];
+  db.photoSuggestions = (db.photoSuggestions || []).filter((x) => db.users[x.personId]);
   writeDb();
   const notice = `Gaala nollattu. Varmuuskopio tallennettu: ${backup}`;
   // Jos admin poisti samalla oman osallistujatunnuksensa, palataan kirjautumissivulle
@@ -679,6 +726,8 @@ route('DELETE', '/api/admin/users/:id', ({ user, params }) => {
   if (!u || u.root) fail(404, 'Osallistujaa ei löydy.');
   if (u.id === user.id) fail(400, 'Et voi poistaa itseäsi.');
   deleteImage(u.photo);
+  for (const x of (db.photoSuggestions || []).filter((y) => y.personId === u.id)) deleteImage(x.image);
+  db.photoSuggestions = (db.photoSuggestions || []).filter((y) => y.personId !== u.id);
   delete db.users[u.id];
   db.catVotes = db.catVotes.filter((v) => v.userId !== u.id);
   db.nomVotes = db.nomVotes.filter((v) => v.userId !== u.id);

@@ -729,3 +729,46 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 .me-card:hover { transform: none; border-color: var(--border); }
 .me-card > .btn { align-self: center; }
 .whoami { min-width: 0; }
+/* Profiilikuvaehdotukset */
+.suggest-btn { gap: 8px; }
+.suggest-btn.is-open { color: var(--gold-light); }
+.count-badge {
+  display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  background: var(--gold-gradient); color: var(--on-gold); font: 600 11px/1 var(--font-sans); letter-spacing: 0;
+}
+.photos-view { padding-top: 48px; }
+.photos-view .hero-head { display: grid; gap: 14px; justify-items: center; text-align: center; margin-bottom: 12px; }
+.sugg-card { cursor: default; }
+.sugg-card:hover { transform: none; }
+.sugg-card.drop-hover { border-color: var(--gold); box-shadow: var(--glow-gold); }
+.sugg-list { list-style: none; margin: 8px 12px 0; padding: 0; display: grid; gap: 8px; text-align: left; }
+.sugg-item { display: grid; grid-template-columns: 64px 1fr; gap: 10px; align-items: start; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-md); background: rgba(255, 238, 205, 0.03); min-width: 0; }
+.sugg-item img { width: 64px; height: 80px; object-fit: cover; border-radius: 8px; display: block; }
+.sugg-meta { display: grid; gap: 2px; min-width: 0; }
+.sugg-meta .small { overflow-wrap: anywhere; }
+.sugg-actions { display: flex; flex-wrap: wrap; gap: 0 2px; margin: 2px 0 0 -10px; }
+@media (max-width: 560px) {
+  .sugg-list { margin-inline: 8px; }
+  .sugg-item { grid-template-columns: 1fr; padding: 6px; }
+  .sugg-item img { width: 100%; height: auto; aspect-ratio: 4 / 5; }
+}
+.short-label { display: none; }
+.whoami { flex-wrap: wrap; justify-content: flex-end; row-gap: 2px; }
+@media (max-width: 560px) {
+  .whoami { width: 100%; justify-content: space-between; gap: 4px; }
+  .whoami .btn { padding-inline: 8px; }
+  .long-label { display: none; }
+  .short-label { display: inline; }
+  .me-chip .muted { display: none; } /* puhelimessa pelkkä kuva; nimi näkyy kortissa */
+  .me-chip { padding: 4px; }
+}
+@media (max-width: 400px) { .whoami .btn { font-size: 12px; letter-spacing: 0.08em; padding-inline: 6px; } }
+@media (max-width: 360px) {
+  .whoami { gap: 2px; }
+  .whoami .btn { letter-spacing: 0.04em; padding-inline: 4px; }
+  .whoami .me-avatar { width: 32px; height: 32px; }
+  .whoami .me-chip { padding: 2px; }
+  .suggest-btn { gap: 5px; }
+  .count-badge { min-width: 18px; height: 18px; padding: 0 5px; }
+}
+.sugg-grid { align-items: flex-start; }
