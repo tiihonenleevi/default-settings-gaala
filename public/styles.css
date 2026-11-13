@@ -808,3 +808,34 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 .k18-panel { display: grid; gap: 10px; align-content: start; }
 .k18-btn { justify-self: start; letter-spacing: 0.16em; }
 .k18-panel.is-on { border-color: rgba(210, 175, 87, 0.7); box-shadow: var(--glow-gold); }
+
+/* ---------- Hall of Fame ---------- */
+.hof { gap: 48px; }
+.hof-years { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.hof-year { display: grid; gap: 40px; scroll-margin-top: 96px; }
+.hof-year-head { display: grid; gap: 8px; justify-items: center; text-align: center; }
+.hof-year-title {
+  font: 600 clamp(44px, 9vw, 76px)/1 var(--font-display); margin: 0;
+  background: var(--gold-foil); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.hof-cat { display: grid; gap: 20px; }
+.hof-winner { cursor: default; border-color: rgba(210, 175, 87, 0.7); box-shadow: var(--glow-gold); }
+.hof-winner:hover { transform: none; border-color: rgba(210, 175, 87, 0.7); }
+.hof-winner .final-photo > span { background: var(--gold-gradient); color: var(--on-gold); border-color: transparent; }
+.hof-winner .final-pick { background: var(--gold-gradient); color: var(--on-gold); border-color: transparent; font-weight: 600; }
+.hof-rest { display: grid; gap: 12px; justify-items: center; }
+.hof-noms { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.hof-noms li {
+  display: flex; align-items: center; gap: 12px; min-width: 0; max-width: 100%; width: 300px;
+  padding: 10px 14px 10px 10px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
+}
+.hof-noms li > span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.hof-noms .person-photo { flex: none; width: 52px; height: 52px; }
+.hof-noms .person-photo > span { font-size: 22px; }
+.hof-admin { margin-top: 24px; }
+.hof-text { min-height: 280px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; line-height: 1.5; }
+.hof-btn.is-open { color: var(--gold-light); background: rgba(210, 175, 87, 0.1); }
+@media (max-width: 520px) { .hof-noms li { width: 100%; } }
+.hof .hero-head { justify-items: center; text-align: center; }
+.hof-year + .hof-year { position: relative; padding-top: 56px; }
+.hof-year + .hof-year::before { content: "✦"; position: absolute; top: 0; left: 0; right: 0; text-align: center; color: var(--gold-dark); letter-spacing: 0; }

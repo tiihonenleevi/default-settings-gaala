@@ -57,6 +57,8 @@ function emptyDb() {
     // Profiilikuvien versiot: kaikki ehdotetut, adminin lisäämät ja aiemmat kuvat säilyvät, ja admin voi vaihtaa niiden välillä.
     // { id, personId, by, image, crop, source: 'suggestion' | 'admin' | 'previous', withdrawn, createdAt }
     photoSuggestions: [],
+    // Hall of Fame: aiempien vuosien gaalat. { id, year, categories: [{ name, description, nominees: [{ name, reason, personId, winner }] }] }
+    hallOfFame: [],
   };
 }
 
@@ -359,6 +361,8 @@ function stateFor(user, opts = {}) {
   base.lockReady = user.root || user.tester ? { ok: !user.root, reason: '' } : lockReady(user);
 
 
+  base.hallOfFame = hofView();
+
   if (user.admin) base.admin = adminView();
   return base;
 }
@@ -408,6 +412,58 @@ function adminView() {
     // Palauteloki: vain adminit näkevät kirjoittajan
     feedbackLog: (db.feedback || []).map((f) => ({ id: f.id, phase: f.phase || 5, name: userName(f.userId) || 'Poistettu osallistuja', text: f.text, createdAt: f.createdAt })),
   };
+}
+
+// ---------- Hall of Fame ----------
+// Aiempien vuosien voittajat ja ehdokkaat. Henkilöön linkitetyn ehdokkaan kuva haetaan osallistujalta, joten
+// kuvat noudattavat myös Alle K18 -tilaa. Nimi tallennetaan erikseen, jotta se säilyy, vaikka osallistuja poistettaisiin.
+function hofView() {
+  return (db.hallOfFame || []).slice().sort((a, b) => b.year - a.year).map((y) => ({
+    id: y.id, year: y.year,
+    categories: y.categories.map((c) => ({
+      name: c.name, description: c.description || '',
+      nominees: c.nominees.map((n) => ({ name: n.name, reason: n.reason || '', winner: !!n.winner, photo: n.personId ? displayPhoto(db.users[n.personId]) : null })),
+    })),
+  }));
+}
+
+// Henkilön tunnistus nimestä (kirjainkoolla ei väliä), jotta käsin kirjoitetuille ehdokkaille löytyy kuva
+function personByName(name) {
+  const key = norm(name);
+  return Object.values(db.users).find((u) => !u.root && !u.tester && norm(u.name) === key) || null;
+}
+
+// Tekstimuoto: kategoriat tyhjällä rivillä erotettuina. Ensimmäinen rivi on kategorian nimi, "> kuvaus" -rivi
+// on valinnainen kuvaus ja muut rivit ehdokkaita muodossa "Nimi – peruste". Voittajan rivi alkaa ★- tai *-merkillä.
+// Hallinnan "Kopioi tulokset tekstinä" -muoto kelpaa sellaisenaan (äänimäärät lopussa ohitetaan).
+function parseHofText(text) {
+  const blocks = String(text || '').replace(/\r/g, '').split(/\n\s*\n/).map((b) => b.split('\n').map((l) => l.trim()).filter(Boolean)).filter((b) => b.length);
+  if (!blocks.length) fail(400, 'Kirjoita vähintään yksi kategoria.');
+  if (blocks.length > 40) fail(400, 'Liikaa kategorioita (max 40).');
+  return blocks.map((lines) => {
+    const name = clean(lines[0].replace(/^#+\s*/, ''), 80);
+    if (!name) fail(400, 'Kategorialta puuttuu nimi.');
+    let description = '';
+    const nominees = [];
+    for (const line of lines.slice(1)) {
+      if (line.startsWith('>')) { description = clean(line.slice(1), 200); continue; }
+      const winner = /^[★*]/.test(line);
+      const rest = line.replace(/^[★*]\s*/, '').replace(/^[-•]\s+/, '').replace(/\s*\(\d+[^)]*\)\s*$/, '');
+      const [rawName, ...why] = rest.split(/\s+[–—-]\s+/);
+      const nName = clean(rawName, 60);
+      if (!nName) continue;
+      const person = personByName(nName);
+      nominees.push({ name: person ? person.name : nName, reason: clean(why.join(' – '), 160), personId: person ? person.id : null, winner });
+    }
+    if (nominees.length > 30) fail(400, `Liikaa ehdokkaita kategoriassa ${name} (max 30).`);
+    return { name, description, nominees };
+  });
+}
+
+function cleanYear(v) {
+  const y = Number(v);
+  if (!Number.isInteger(y) || y < 2000 || y > 2100) fail(400, 'Anna vuosi muodossa 2025.');
+  return y;
 }
 
 // ---------- Reitit ----------
@@ -706,6 +762,47 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
   const notice = `Gaala nollattu. Varmuuskopio tallennettu: ${backup}`;
   // Jos admin poisti samalla oman osallistujatunnuksensa, palataan kirjautumissivulle
   return db.users[user.id] ? { ...stateFor(user), notice } : { ...stateFor(null), notice };
+}, { admin: true });
+
+// Hall of Fame: vuoden lisäys tai muokkaus tekstinä (id puuttuu = uusi vuosi)
+route('POST', '/api/admin/hof', ({ user, body }) => {
+  const year = cleanYear(body.year);
+  const categories = parseHofText(body.text);
+  db.hallOfFame = db.hallOfFame || [];
+  const entry = body.id ? db.hallOfFame.find((y) => y.id === body.id) : null;
+  if (body.id && !entry) fail(404, 'Vuotta ei löydy.');
+  if (db.hallOfFame.some((y) => y.year === year && y !== entry)) fail(409, `Vuosi ${year} on jo Hall of Famessa. Muokkaa sitä.`);
+  if (entry) Object.assign(entry, { year, categories, updatedAt: now() });
+  else db.hallOfFame.push({ id: newId(), year, categories, createdAt: now() });
+  writeDb();
+  return { ...stateFor(user), notice: `Gaala ${year} tallennettu Hall of Fameen.` };
+}, { admin: true, maxBody: 60000 });
+
+// Tämän vuoden tulokset Hall of Fameen: gaalaan päässeet kategoriat, finalistit ja voittajat (tasapelissä kaikki)
+route('POST', '/api/admin/hof/archive', ({ user, body }) => {
+  if (db.settings.phase !== 5) fail(409, 'Tulokset voi arkistoida, kun äänestys on suljettu (vaihe 5).');
+  const year = cleanYear(body.year);
+  db.hallOfFame = db.hallOfFame || [];
+  if (db.hallOfFame.some((y) => y.year === year)) fail(409, `Vuosi ${year} on jo Hall of Famessa. Poista tai muokkaa sitä ensin.`);
+  const cats = advancedCats();
+  const winners = winnersFor(cats.map((c) => c.id));
+  const categories = cats.map((c) => ({
+    name: c.name, description: c.description || '',
+    nominees: db.nominees.filter((n) => n.categoryId === c.id && n.finalist).map((n) => ({ name: nomName(n), reason: n.reason || '', personId: n.personId || null, winner: winners[c.id].includes(n.id) }))
+      .sort((a, b) => (b.winner - a.winner) || a.name.localeCompare(b.name, 'fi')),
+  })).filter((c) => c.nominees.length);
+  if (!categories.length) fail(409, 'Finalisteja ei ole, joten arkistoitavaa ei ole.');
+  db.hallOfFame.push({ id: newId(), year, categories, createdAt: now() });
+  writeDb();
+  return { ...stateFor(user), notice: `Gaalan ${year} tulokset lisätty Hall of Fameen.` };
+}, { admin: true });
+
+route('DELETE', '/api/admin/hof/:id', ({ user, params }) => {
+  const entry = (db.hallOfFame || []).find((y) => y.id === params.id);
+  if (!entry) fail(404, 'Vuotta ei löydy.');
+  db.hallOfFame = db.hallOfFame.filter((y) => y !== entry);
+  writeDb();
+  return { ...stateFor(user), notice: `Gaala ${entry.year} poistettu Hall of Famesta.` };
 }, { admin: true });
 
 // ---------- Admin ----------
