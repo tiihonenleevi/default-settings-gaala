@@ -908,12 +908,19 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
   .topbar .whoami { display: contents; }
   .topbar .me-chip, .topbar .me-label { grid-column: 3; grid-row: 1; justify-self: end; min-width: 0; max-width: 100%; }
   .topbar .me-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; text-align: right; }
+  /* Tekstilinkit ilman kehyksiä; avoin näkymä kultaisena ja alleviivattuna (kuten vuosivälilehdet) */
+  .topbar .wrap { row-gap: 6px; }
   .topbar .whoami .btn {
-    grid-row: 2; width: 100%; min-height: 42px; padding: 6px 4px;
-    font-size: 11px; letter-spacing: 0.1em; line-height: 1.25; white-space: normal; text-align: center;
-    border: 1px solid var(--border); border-radius: 10px; background: rgba(255, 238, 205, 0.03);
+    grid-row: 2; width: 100%; min-height: 34px; padding: 4px 2px 8px; position: relative;
+    font-size: 11px; letter-spacing: 0.12em; line-height: 1.25; white-space: normal; text-align: center;
+    border: 0; border-radius: 0; background: none;
   }
-  .topbar .whoami .btn.is-open { color: var(--gold-light); border-color: rgba(210, 175, 87, 0.55); background: rgba(210, 175, 87, 0.1); }
+  .topbar .whoami .btn:hover { background: none; }
+  .topbar .whoami .btn::after { content: ""; position: absolute; left: 22%; right: 22%; bottom: 2px; height: 2px; border-radius: 2px; background: transparent; }
+  .topbar .whoami .btn.is-open { color: var(--gold-light); }
+  .topbar .whoami .btn.is-open::after { background: var(--gold); }
+  /* Ohut erotin linkkien välissä */
+  .topbar .whoami .btn ~ .btn::before { content: ""; position: absolute; left: -4px; top: 30%; bottom: 30%; width: 1px; background: var(--border); }
   /* Ilman Hall of Fame -nappia kuvanappi venyy kahden ruudun levyiseksi */
   .topbar .whoami:not(:has(.hof-btn)) .suggest-btn { grid-column: 1 / 3; }
   .topbar .whoami .suggest-btn .long-label { display: none; }
