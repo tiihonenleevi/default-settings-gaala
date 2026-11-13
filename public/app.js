@@ -136,14 +136,14 @@ function mainView() {
 function whoami() {
   const me = state.me;
   const label = `<span class="muted">${esc(me.name)}${me.admin ? ' · admin' : ''}</span>`;
-  if (!me.photo) return label;
+  if (!me.photo) return `<span class="muted me-label">${esc(me.name)}${me.admin ? ' · admin' : ''}</span>`;
   return `<button class="me-chip" data-act="me-card" title="Näytä oma kortti" aria-label="Näytä oma kortti: ${esc(me.name)}">${portrait(me, 'me-avatar')}${label}</button>`;
 }
 
 // Yläpalkin Hall of Fame -nappi. Näkyy, kun aiempia gaaloja on tallennettu (adminille aina, jotta ensimmäisen voi lisätä).
 function hofButton() {
   if (!(state.hallOfFame || []).length && !state.me.admin) return '';
-  return `<button class="btn btn--ghost hof-btn${hofOpen ? ' is-open' : ''}" data-act="${hofOpen ? 'hof-close' : 'hof-open'}" aria-pressed="${hofOpen}" aria-label="Hall of Fame"><span class="long-label">Hall of Fame</span><span class="short-label" aria-hidden="true">HoF</span></button>`;
+  return `<button class="btn btn--ghost hof-btn${hofOpen ? ' is-open' : ''}" data-act="${hofOpen ? 'hof-close' : 'hof-open'}" aria-pressed="${hofOpen}">Hall of Fame</button>`;
 }
 
 // ---------- Hall of Fame ----------
