@@ -361,7 +361,8 @@ function stateFor(user, opts = {}) {
   base.lockReady = user.root || user.tester ? { ok: !user.root, reason: '' } : lockReady(user);
 
 
-  base.hallOfFame = hofView();
+  // Hall of Fame näkyy muille vasta, kun admin on julkaissut sen; adminit näkevät sen aina (keskeneräisenä)
+  base.hallOfFame = db.settings.hofPublished || user.admin ? hofView() : [];
 
   if (user.admin) base.admin = adminView();
   return base;
@@ -405,6 +406,7 @@ function adminView() {
     nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), ownPhoto: !!n.photo, finalist: !!n.finalist, votes: nomCounts[n.id] || 0, finalVotes: fin[n.id] || 0, byName: userName(n.by),
       finalVoters: db.settings.phase >= 4 ? Object.entries(db.finalVotes).filter(([, v]) => v[n.categoryId] === n.id).map(([uid]) => userName(uid) || 'poistettu').sort((a, b) => a.localeCompare(b, 'fi')) : [] })),
     safeMode: !!db.settings.safeMode,
+    hofPublished: !!db.settings.hofPublished,
     nomVoteNeed: nomVoteNeed(null).reduce((sum, x) => sum + x.need, 0),
     voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nomVotes.map((v) => v.userId)).size, p4: Object.keys(db.finalVotes).length },
     locked: Object.values(db.users).filter((u) => !u.root && !u.tester && isLocked(u)).length,
@@ -961,6 +963,7 @@ route('POST', '/api/admin/settings', ({ user, body }) => {
   if ('deadline' in body) s.deadline = clean(body.deadline, 80);
   if ('nextStart' in body) s.nextStart = clean(body.nextStart, 80);
   if ('safeMode' in body) s.safeMode = !!body.safeMode;
+  if ('hofPublished' in body) s.hofPublished = !!body.hofPublished;
   if (body.phaseEnds && typeof body.phaseEnds === 'object') {
     const ends = {};
     for (const p of [1, 2, 3, 4]) {

@@ -927,3 +927,12 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
   .topbar .whoami .suggest-btn .short-label { display: inline; }
 }
 @media (max-width: 360px) { .topbar .whoami .btn { font-size: 10px; letter-spacing: 0.06em; } }
+/* Hall of Famen näkyvyys */
+.hof-hidden-tag { margin-left: 6px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border); font-size: 10px; letter-spacing: 0.12em; color: var(--ink-muted); }
+.hof-visibility { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; margin: 0 auto 24px; max-width: 760px; border-color: rgba(210, 175, 87, 0.5); }
+.hof-visibility.is-public { border-color: var(--border); }
+.hof-vis-text { display: grid; gap: 4px; min-width: 0; flex: 1 1 260px; }
+@media (max-width: 560px) {
+  /* puhelimessa "piilossa"-merkki pienenä pisteenä napin kulmassa, jotta teksti mahtuu riville */
+  .topbar .whoami .hof-btn .hof-hidden-tag { position: absolute; top: 4px; right: 6%; width: 7px; height: 7px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--gold); font-size: 0; }
+}

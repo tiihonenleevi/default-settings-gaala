@@ -140,10 +140,25 @@ function whoami() {
   return `<button class="me-chip" data-act="me-card" title="Näytä oma kortti" aria-label="Näytä oma kortti: ${esc(me.name)}">${portrait(me, 'me-avatar')}${label}</button>`;
 }
 
-// Yläpalkin Hall of Fame -nappi. Näkyy, kun aiempia gaaloja on tallennettu (adminille aina, jotta ensimmäisen voi lisätä).
+// Yläpalkin Hall of Fame -nappi. Muille näkyy vasta, kun admin on julkaissut Hall of Famen ja siinä on sisältöä;
+// adminille aina (piilotettuna merkillä "piilossa"), jotta sitä voi rakentaa rauhassa.
 function hofButton() {
   if (!(state.hallOfFame || []).length && !state.me.admin) return '';
-  return `<button class="btn btn--ghost hof-btn${hofOpen ? ' is-open' : ''}" data-act="${hofOpen ? 'hof-close' : 'hof-open'}" aria-pressed="${hofOpen}">Hall of Fame</button>`;
+  const hidden = state.admin && !state.admin.hofPublished;
+  return `<button class="btn btn--ghost hof-btn${hofOpen ? ' is-open' : ''}" data-act="${hofOpen ? 'hof-close' : 'hof-open'}" aria-pressed="${hofOpen}">Hall of Fame${hidden ? ' <span class="hof-hidden-tag">piilossa</span>' : ''}</button>`;
+}
+
+// Näkyvyys: admin julkaisee Hall of Famen muille, kun se on valmis (tai piilottaa sen taas).
+function hofVisibility() {
+  const pub = !!state.admin.hofPublished;
+  return `
+    <div class="panel hof-visibility${pub ? ' is-public' : ''}">
+      <div class="hof-vis-text">
+        <p class="eyebrow">Näkyvyys</p>
+        <p style="margin:0">${pub ? '<b>Julkaistu.</b> Kaikki osallistujat näkevät Hall of Famen.' : '<b>Piilossa muilta.</b> Vain adminit näkevät Hall of Famen. Julkaise, kun se on valmis.'}</p>
+      </div>
+      <button class="btn btn--sm ${pub ? 'btn--secondary' : 'btn--primary'}" data-act="hof-publish" aria-pressed="${pub}">${pub ? 'Piilota muilta' : 'Julkaise Hall of Fame'}</button>
+    </div>`;
 }
 
 // ---------- Hall of Fame ----------
@@ -158,7 +173,8 @@ function hofView() {
       <p class="lead">${years.length > 1 ? `Default Settings Gaala vuodesta ${years[years.length - 1].year} lähtien.` : 'Täällä elävät aiempien gaalojen voittajat ja ehdokkaat.'}</p>
       <div><button class="btn btn--secondary btn--sm" data-act="hof-close">Takaisin gaalaan</button></div>
     </header>
-    ${years.length ? hofTabs(years) : `<div class="empty">${admin ? 'Hall of Fame on vielä tyhjä. Lisää viime vuoden gaala alta.' : 'Hall of Fame on vielä tyhjä.'}</div>`}
+    ${admin && s.admin ? hofVisibility() : ''}
+    ${years.length ? hofTabs(years) : `<div class="empty">${admin ? 'Hall of Fame on vielä tyhjä. Lisää viime vuoden gaala alta.' : 'Hall of Fame julkaistaan myöhemmin.'}</div>`}
     ${admin ? hofAdmin() : ''}
   </section>`;
 }
@@ -1381,6 +1397,13 @@ document.addEventListener('click', async (e) => {
       if (hofDraft && hofDraft.dirty && !confirm('Hall of Fame -lomakkeessa on tallentamattomia muutoksia. Hylätäänkö ne?')) break;
       hofOpen = false; hofDraft = null; syncHofUrl(false); render(); window.scrollTo(0, 0); break;
     case 'hof-year': selectHofYear(Number(t.dataset.year)); break;
+    case 'hof-publish': {
+      const on = !state.admin.hofPublished;
+      if (on && !(state.hallOfFame || []).length && !confirm('Hall of Fame on vielä tyhjä. Julkaistaanko silti?')) break;
+      if (!confirm(on ? 'Julkaistaanko Hall of Fame kaikille osallistujille?' : 'Piilotetaanko Hall of Fame muilta? Vain adminit näkevät sen.')) break;
+      await api('POST', '/api/admin/settings', { hofPublished: on }).then(() => toast(on ? 'Hall of Fame julkaistu.' : 'Hall of Fame piilotettu muilta.')).catch(() => {});
+      break;
+    }
     case 'hof-edit': openHofDraft(id); render(); document.querySelector('.hof-form')?.scrollIntoView({ block: 'start' }); document.getElementById('hc-0')?.focus({ preventScroll: true }); break;
     case 'hof-edit-cancel':
       if (hofDraft.dirty && !confirm('Hylätäänkö tallentamattomat muutokset?')) break;

@@ -25,7 +25,7 @@ Vaiheiden 1–4 lopussa on **Lukko sisään** -nappi. Kun osallistuja lukitsee v
 
 ## Hall of Fame
 
-Yläpalkin **Hall of Fame** -napista aukeaa sivu, jolla näkyvät aiempien vuosien gaalat uusin ensin: jokaisesta kategoriasta voittaja (tasapelissä jaettu voitto) isona korttina ja muut ehdokkaat sen alla. Sivu näkyy kaikille kirjautuneille, kun vähintään yksi vuosi on tallennettu (adminille aina). Kun vuosia on useampi, ne ovat välilehtinä (uusin valittuna). Valittu vuosi näkyy osoitteessa, esim. `/#hall-of-fame/2025`, joten linkin tiettyyn vuoteen voi jakaa.
+Yläpalkin **Hall of Fame** -napista aukeaa sivu, jolla näkyvät aiempien vuosien gaalat uusin ensin: jokaisesta kategoriasta voittaja (tasapelissä jaettu voitto) isona korttina ja muut ehdokkaat sen alla. Sivu on aluksi **piilossa muilta**: vain adminit näkevät sen (napissa merkki "piilossa"), joten sitä voi rakentaa rauhassa. Kun Hall of Fame on valmis, admin painaa sivun yläosan Näkyvyys-paneelista **Julkaise Hall of Fame**, jolloin se näkyy kaikille kirjautuneille. Samasta paneelista sen saa taas piiloon (**Piilota muilta**). Piilotettuna osallistujille ei lähetetä Hall of Famen sisältöä lainkaan. Kun vuosia on useampi, ne ovat välilehtinä (uusin valittuna). Valittu vuosi näkyy osoitteessa, esim. `/#hall-of-fame/2025`, joten linkin tiettyyn vuoteen voi jakaa.
 
 Adminit hallitsevat sivua sen alalaidasta:
 
