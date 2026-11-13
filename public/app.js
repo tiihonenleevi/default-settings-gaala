@@ -15,6 +15,7 @@ let stats = null;
 let meCard = false; // käyttäjäkortti auki
 let photosOpen = false; // "Ehdota profiilikuvia" -näkymä auki
 let hofOpen = false; // Hall of Fame -näkymä auki
+let hofYearSel = null; // valittu vuosi (null = uusin); näkyy osoitteessa muodossa #hall-of-fame/2025
 let hofDraft = null; // Hall of Fame -lomakkeen luonnos: { id, year, categories, dirty }; null = lomake kiinni
 const versionsOpen = new Set(); // henkilöt, joiden kuvaversiot on avattu näkyviin
 let previewVersion = null; // esikatseltavan kuvaversion id
@@ -72,6 +73,9 @@ function render() {
 
   for (const [id, v] of Object.entries(kept)) { const el = document.getElementById(id); if (el && v) el.value = v; }
   if (active) { const el = document.getElementById(active); if (el) { el.focus(); if (sel && el.setSelectionRange) try { el.setSelectionRange(...sel); } catch {} } }
+  // Hall of Famen valittu vuosi näkyviin välilehtirivillä (vain rivi vierii, ei sivu)
+  const tabs = app.querySelector('.hof-tabs'); const cur = tabs && tabs.querySelector('[aria-selected="true"]');
+  if (cur) tabs.scrollLeft = cur.offsetLeft - (tabs.clientWidth - cur.offsetWidth) / 2;
 }
 
 // ---------- Kirjautuminen ----------
@@ -152,13 +156,45 @@ function hofView() {
       <p class="eyebrow">Hall of Fame</p>
       <h1 class="h1">Edellisten vuosien voittajat</h1>
       <p class="lead">${years.length > 1 ? `Default Settings Gaala vuodesta ${years[years.length - 1].year} lähtien.` : 'Täällä elävät aiempien gaalojen voittajat ja ehdokkaat.'}</p>
-      ${years.length > 1 ? `<nav class="hof-years" aria-label="Vuodet">${years.map((y) => `<a class="btn btn--ghost btn--sm" href="#hof-${y.year}">${y.year}</a>`).join('')}</nav>` : ''}
       <div><button class="btn btn--secondary btn--sm" data-act="hof-close">Takaisin gaalaan</button></div>
     </header>
-    ${years.length ? years.map(hofYear).join('') : `<div class="empty">${admin ? 'Hall of Fame on vielä tyhjä. Lisää viime vuoden gaala alta.' : 'Hall of Fame on vielä tyhjä.'}</div>`}
+    ${years.length ? hofTabs(years) : `<div class="empty">${admin ? 'Hall of Fame on vielä tyhjä. Lisää viime vuoden gaala alta.' : 'Hall of Fame on vielä tyhjä.'}</div>`}
     ${admin ? hofAdmin() : ''}
   </section>`;
 }
+
+// Valittu vuosi: osoitteen vuosi, jos se on olemassa, muuten uusin
+function hofSelected(years = state.hallOfFame || []) {
+  return years.find((y) => y.year === hofYearSel) || years[0] || null;
+}
+
+// Vuodet välilehtinä (uusin ensin). Yhdellä vuodella välilehtiä ei tarvita.
+function hofTabs(years) {
+  const sel = hofSelected(years);
+  if (years.length === 1) return hofYear(sel);
+  return `
+  <div class="tabs hof-tabs" role="tablist" aria-label="Gaalavuodet">
+    ${years.map((y) => `<button type="button" role="tab" id="hof-tab-${y.year}" aria-controls="hof-panel" aria-selected="${y === sel}" tabindex="${y === sel ? 0 : -1}" data-act="hof-year" data-year="${y.year}">${y.year}</button>`).join('')}
+  </div>
+  <div id="hof-panel" role="tabpanel" aria-labelledby="hof-tab-${sel.year}">${hofYear(sel)}</div>`;
+}
+
+// Osoite seuraa Hall of Famea: #hall-of-fame tai #hall-of-fame/2025. Avaaminen lisää historiaan rivin, jotta
+// selaimen takaisin-nappi palaa gaalaan; vuoden vaihto vain korvaa osoitteen.
+function hofHash() { return hofOpen ? `#hall-of-fame${hofYearSel ? '/' + hofYearSel : ''}` : ''; }
+function syncHofUrl(push) {
+  const url = location.pathname + location.search + hofHash();
+  if (url === location.pathname + location.search + location.hash) return;
+  history[push ? 'pushState' : 'replaceState'](null, '', url);
+}
+function readHofUrl() {
+  const m = /^#hall-of-fame(?:\/(\d{4}))?$/.exec(location.hash);
+  hofOpen = !!m;
+  hofYearSel = m && m[1] ? Number(m[1]) : null;
+  if (hofOpen) { photosOpen = false; meCard = false; previewVersion = null; }
+}
+readHofUrl();
+window.addEventListener('popstate', () => { readHofUrl(); if (state) { render(); window.scrollTo(0, 0); } });
 
 function hofYear(y) {
   const n = y.categories.length;
@@ -1244,6 +1280,23 @@ function hofInput(el, changed) {
   }
 }
 
+function selectHofYear(year, focus) {
+  hofYearSel = year; syncHofUrl(false); render();
+  if (focus) document.getElementById(`hof-tab-${year}`)?.focus();
+}
+
+// Välilehtien näppäimistökäyttö: nuolet, Home ja End
+document.addEventListener('keydown', (e) => {
+  const tab = e.target.closest && e.target.closest('.hof-tabs [role="tab"]');
+  if (!tab) return;
+  const years = (state.hallOfFame || []).map((y) => y.year);
+  const i = years.indexOf(Number(tab.dataset.year));
+  const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: years.length - 1 }[e.key];
+  if (next === undefined) return;
+  e.preventDefault();
+  selectHofYear(years[(next + years.length) % years.length], true);
+});
+
 // ---------- Tapahtumat ----------
 document.addEventListener('click', async (e) => {
   const t = e.target.closest('[data-act]');
@@ -1323,10 +1376,11 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'photos-close': photosOpen = false; previewVersion = null; render(); window.scrollTo(0, 0); break;
-    case 'hof-open': hofOpen = true; photosOpen = false; meCard = false; previewVersion = null; render(); window.scrollTo(0, 0); break;
+    case 'hof-open': hofOpen = true; hofYearSel = null; photosOpen = false; meCard = false; previewVersion = null; syncHofUrl(true); render(); window.scrollTo(0, 0); break;
     case 'hof-close':
       if (hofDraft && hofDraft.dirty && !confirm('Hall of Fame -lomakkeessa on tallentamattomia muutoksia. Hylätäänkö ne?')) break;
-      hofOpen = false; hofDraft = null; render(); window.scrollTo(0, 0); break;
+      hofOpen = false; hofDraft = null; syncHofUrl(false); render(); window.scrollTo(0, 0); break;
+    case 'hof-year': selectHofYear(Number(t.dataset.year)); break;
     case 'hof-edit': openHofDraft(id); render(); document.querySelector('.hof-form')?.scrollIntoView({ block: 'start' }); document.getElementById('hc-0')?.focus({ preventScroll: true }); break;
     case 'hof-edit-cancel':
       if (hofDraft.dirty && !confirm('Hylätäänkö tallentamattomat muutokset?')) break;
@@ -1351,11 +1405,11 @@ document.addEventListener('click', async (e) => {
     case 'hof-del': {
       const y = (state.hallOfFame || []).find((x) => x.id === id);
       if (!y || !confirm(`Poistetaanko gaala ${y.year} Hall of Famesta? Tätä ei voi perua.`)) break;
-      try { await api('DELETE', `/api/admin/hof/${id}`, {}); hofDraft = null; render(); } catch {}
+      try { await api('DELETE', `/api/admin/hof/${id}`, {}); hofDraft = null; if (hofYearSel === y.year) hofYearSel = null; syncHofUrl(false); render(); } catch {}
       break;
     }
     case 'hof-archive':
-      try { await api('POST', '/api/admin/hof/archive', { year: Number(t.dataset.year) }); window.scrollTo(0, 0); } catch {}
+      try { await api('POST', '/api/admin/hof/archive', { year: Number(t.dataset.year) }); hofYearSel = Number(t.dataset.year); syncHofUrl(false); render(); window.scrollTo(0, 0); } catch {}
       break;
     case 'sugg-safe': {
       const x = (state.photoSuggestions || []).find((y) => y.id === id);
@@ -1787,8 +1841,8 @@ document.addEventListener('submit', async (e) => {
         id: d.id || undefined, year: d.year,
         categories: d.categories.map((c) => ({ name: c.name, description: c.description, nominees: c.nominees.map((n) => ({ personId: n.personId || null, name: n.other ? n.name : '', reason: n.reason, winner: n.winner, image: n.image, crop: n.crop })) })),
       });
-      hofDraft = null; render();
-      document.querySelector('.hof-years, .hof-year')?.scrollIntoView({ block: 'start' });
+      hofDraft = null; hofYearSel = Number(d.year); syncHofUrl(false); render(); // tallennettu vuosi näkyviin
+      document.querySelector('.hof-tabs, .hof-year')?.scrollIntoView({ block: 'start' });
     } else if (f.id === 'feedback-form') {
       const text = v('fb-text');
       if (!text) return;
@@ -1811,7 +1865,7 @@ setInterval(() => {
   (async () => {
   const k = new URLSearchParams(location.search).get('k');
   if (k) {
-    history.replaceState(null, '', location.pathname);
+    history.replaceState(null, '', location.pathname + location.hash); // Hall of Famen vuosi säilyy
     try { await api('POST', '/api/login', { code: k }); return; } catch {}
   }
   refresh();
@@ -1822,7 +1876,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && !i
 (async () => {
   const k = new URLSearchParams(location.search).get('k');
   if (k) {
-    history.replaceState(null, '', location.pathname);
+    history.replaceState(null, '', location.pathname + location.hash); // Hall of Famen vuosi säilyy
     try { await api('POST', '/api/login', { code: k }); return; } catch {}
   }
   refresh();
