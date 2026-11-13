@@ -833,9 +833,42 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 .hof-noms .person-photo { flex: none; width: 52px; height: 52px; }
 .hof-noms .person-photo > span { font-size: 22px; }
 .hof-admin { margin-top: 24px; }
-.hof-text { min-height: 280px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; line-height: 1.5; }
 .hof-btn.is-open { color: var(--gold-light); background: rgba(210, 175, 87, 0.1); }
 @media (max-width: 520px) { .hof-noms li { width: 100%; } }
 .hof .hero-head { justify-items: center; text-align: center; }
 .hof-year + .hof-year { position: relative; padding-top: 56px; }
 .hof-year + .hof-year::before { content: "✦"; position: absolute; top: 0; left: 0; right: 0; text-align: center; color: var(--gold-dark); letter-spacing: 0; }
+
+/* Hall of Fame -lomake */
+.hof-form { gap: 20px; }
+.hof-form-head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
+.hof-year-field { width: 140px; }
+.hof-edit-cat { margin: 0; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: rgba(0, 0, 0, 0.22); display: grid; gap: 14px; min-width: 0; }
+.hof-edit-cat-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; }
+.hof-edit-noms { display: grid; gap: 8px; }
+.hof-edit-nom {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1.3fr) auto auto; align-items: center; gap: 10px;
+  padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-md); background: rgba(255, 238, 205, 0.02);
+}
+.hof-edit-nom.is-winner { border-color: rgba(210, 175, 87, 0.6); background: rgba(210, 175, 87, 0.08); }
+.hof-edit-nom .person-photo { width: 44px; height: 44px; font-size: 20px; }
+.hof-edit-who { display: grid; gap: 6px; min-width: 0; }
+.hof-edit-nom .input { min-width: 0; }
+.hof-win-toggle {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; font-size: 13px; color: var(--ink-muted);
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-pill);
+}
+.hof-win-toggle:has(input:checked) { color: var(--on-gold); background: var(--gold-gradient); border-color: transparent; font-weight: 600; }
+.hof-win-toggle:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.hof-win-toggle input { width: 16px; height: 16px; margin: 0; }
+.hof-x { padding-inline: 10px; }
+.hof-form-actions { padding-top: 8px; border-top: 1px solid var(--border); }
+@media (max-width: 640px) {
+  .hof-edit-cat { padding: 12px; }
+  .hof-edit-nom { grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "pic who x" "pic why why" "pic win win"; gap: 8px; }
+  .hof-edit-nom .person-photo { grid-area: pic; align-self: start; }
+  .hof-edit-who { grid-area: who; }
+  .hof-edit-nom > .input { grid-area: why; }
+  .hof-win-toggle { grid-area: win; justify-self: start; }
+  .hof-x { grid-area: x; }
+}

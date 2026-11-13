@@ -15,7 +15,7 @@ let stats = null;
 let meCard = false; // käyttäjäkortti auki
 let photosOpen = false; // "Ehdota profiilikuvia" -näkymä auki
 let hofOpen = false; // Hall of Fame -näkymä auki
-let hofEditing = null; // muokattavan Hall of Fame -vuoden id ('new' = uusi vuosi)
+let hofDraft = null; // Hall of Fame -lomakkeen luonnos: { id, year, categories, dirty }; null = lomake kiinni
 const versionsOpen = new Set(); // henkilöt, joiden kuvaversiot on avattu näkyviin
 let previewVersion = null; // esikatseltavan kuvaversion id
 
@@ -194,38 +194,81 @@ function hofYear(y) {
   </section>`;
 }
 
-// Hallinnan tekstimuoto (sama, jonka palvelin lukee)
-function hofText(y) {
-  return y.categories.map((c) => [c.name, c.description ? `> ${c.description}` : '', ...c.nominees.map((x) => `${x.winner ? '★ ' : ''}${x.name}${x.reason ? ' – ' + x.reason : ''}`)].filter(Boolean).join('\n')).join('\n\n');
+// ---------- Hall of Fame -lomake ----------
+// Luonnos pidetään muistissa ja päivitetään jokaisella näppäilyllä, joten taustapäivitys (render) ei hävitä sitä.
+const hofNominee = (n = {}) => ({ personId: n.personId || '', name: n.name || '', reason: n.reason || '', winner: !!n.winner, other: !!(n.name && !n.personId) });
+const hofCategory = (c = {}) => ({ name: c.name || '', description: c.description || '', nominees: c.nominees && c.nominees.length ? c.nominees.map(hofNominee) : [hofNominee(), hofNominee(), hofNominee()] });
+
+function openHofDraft(id) {
+  const y = (state.hallOfFame || []).find((x) => x.id === id);
+  if (y) { hofDraft = { id: y.id, year: String(y.year), categories: y.categories.map(hofCategory), dirty: false }; return; }
+  // Uusi: oletuksena viime vuosi, tai jos se on jo lisätty, vanhinta edeltävä vuosi
+  const taken = (state.hallOfFame || []).map((x) => x.year);
+  const year = (taken.length ? Math.min(...taken, new Date().getFullYear()) : new Date().getFullYear()) - 1;
+  hofDraft = { id: null, year: String(year), categories: [hofCategory()], dirty: false };
 }
 
-const HOF_EXAMPLE = 'Vuoden sykähdyttävin hetki\n> Hetki, joka jäi kaikkien mieleen.\n★ Matti – Juhannussaunan laulu\nLiisa – Mökkiretken eksyminen\nPekka – Pikkujoulupuhe\n\nVuoden meemi\n★ Liisa – "Default settings"\nMatti – Kahvinkeitin';
+const hofPeople = () => (state.admin ? state.admin.participants.filter((p) => !p.tester).map((p) => ({ id: p.id, name: p.name, photo: p.shownPhoto })) : state.people || []);
 
-function hofForm(y) {
-  const k = y ? y.id : 'new';
-  // Oletus: viime vuosi, tai jos se on jo lisätty, vanhinta edeltävä vuosi
-  const taken = (state.hallOfFame || []).map((x) => x.year);
-  const year = y ? y.year : taken.length ? Math.min(...taken, new Date().getFullYear()) - 1 : new Date().getFullYear() - 1;
+function hofNomRow(n, ci, ni, people) {
+  const k = `${ci}-${ni}`;
+  const person = people.find((p) => p.id === n.personId);
+  const label = person ? person.name : n.name;
   return `
-  <form class="panel hof-form" data-form="hof" data-id="${y ? y.id : ''}">
-    <p class="eyebrow">${y ? `Muokkaa gaalaa ${y.year}` : 'Lisää aiempi gaala'}</p>
-    <div class="field"><label for="hy-${k}">Vuosi</label><input class="input" id="hy-${k}" data-keep type="number" min="2000" max="2100" required value="${year}" style="max-width:140px"></div>
-    <div class="field">
-      <label for="ht-${k}">Kategoriat ja ehdokkaat</label>
-      <textarea class="input hof-text" id="ht-${k}" data-keep rows="14" required spellcheck="false" placeholder="${esc(HOF_EXAMPLE)}">${y ? esc(hofText(y)) : ''}</textarea>
-      <p class="small muted" style="margin:0">Erota kategoriat tyhjällä rivillä. Ensimmäinen rivi on kategorian nimi, <code>&gt;</code>-alkuinen rivi kuvaus (valinnainen) ja muut rivit ehdokkaita muodossa <code>Nimi – mistä</code>. Merkitse voittaja aloittamalla rivi <code>★</code>- tai <code>*</code>-merkillä. Nimet, jotka vastaavat osallistujaa, saavat tämän kuvan. "Kopioi tulokset tekstinä" -muodon voi liittää sellaisenaan.</p>
+  <div class="hof-edit-nom${n.winner ? ' is-winner' : ''}">
+    ${portrait({ name: label || '?', photo: person ? person.photo : null }, 'person-photo')}
+    <div class="hof-edit-who">
+      <label class="sr-only" for="hp-${k}">Ehdokas ${ni + 1}</label>
+      <select class="input" id="hp-${k}" data-hof="person" data-ci="${ci}" data-ni="${ni}">
+        <option value="">Valitse henkilö…</option>
+        ${people.map((p) => `<option value="${p.id}" ${p.id === n.personId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        <option value="__other" ${n.other ? 'selected' : ''}>Joku muu…</option>
+      </select>
+      ${n.other ? `<label class="sr-only" for="hn-${k}">Nimi</label><input class="input" id="hn-${k}" data-hof="name" data-ci="${ci}" data-ni="${ni}" value="${esc(n.name)}" maxlength="60" placeholder="Nimi">` : ''}
     </div>
-    <div class="edit-actions">
-      <button class="btn btn--primary btn--sm" type="submit">Tallenna</button>
+    <label class="sr-only" for="hr-${k}">Mistä</label>
+    <input class="input" id="hr-${k}" data-hof="reason" data-ci="${ci}" data-ni="${ni}" value="${esc(n.reason)}" maxlength="160" placeholder="Mistä? (valinnainen)">
+    <label class="hof-win-toggle" title="Merkitse voittajaksi"><input type="checkbox" id="hw-${k}" data-hof="winner" data-ci="${ci}" data-ni="${ni}" ${n.winner ? 'checked' : ''}><span>★ Voittaja</span></label>
+    <button class="btn btn--ghost hof-x" type="button" data-act="hof-nom-del" data-ci="${ci}" data-ni="${ni}" aria-label="Poista ehdokas ${ni + 1}" title="Poista ehdokas">✕</button>
+  </div>`;
+}
+
+function hofForm() {
+  const d = hofDraft; const people = hofPeople();
+  return `
+  <form class="panel hof-form" data-form="hof" novalidate>
+    <div class="hof-form-head">
+      <p class="eyebrow">${d.id ? 'Muokkaa gaalaa' : 'Lisää aiempi gaala'}</p>
+      <div class="field hof-year-field"><label for="hof-year">Vuosi</label><input class="input" id="hof-year" data-hof="year" type="number" inputmode="numeric" min="2000" max="2100" value="${esc(d.year)}"></div>
+    </div>
+    ${d.categories.map((c, ci) => `
+    <fieldset class="hof-edit-cat">
+      <legend class="sr-only">Kategoria ${ci + 1}</legend>
+      <div class="hof-edit-cat-head">
+        <span class="eyebrow">Kategoria ${String(ci + 1).padStart(2, '0')}</span>
+        ${d.categories.length > 1 ? `<button class="btn btn--ghost" type="button" data-act="hof-cat-del" data-ci="${ci}">Poista kategoria</button>` : ''}
+      </div>
+      <div class="form-row">
+        <div class="field"><label for="hc-${ci}">Nimi</label><input class="input" id="hc-${ci}" data-hof="cat-name" data-ci="${ci}" value="${esc(c.name)}" maxlength="80" placeholder="Esim. Vuoden sykähdyttävin hetki"></div>
+        <div class="field"><label for="hd-${ci}">Kuvaus (valinnainen)</label><input class="input" id="hd-${ci}" data-hof="cat-desc" data-ci="${ci}" value="${esc(c.description)}" maxlength="200" placeholder="Lyhyt selitys"></div>
+      </div>
+      <div class="hof-edit-noms">
+        <p class="small muted" style="margin:0">Ehdokkaat · rastita voittaja (tasapelissä useampi)</p>
+        ${c.nominees.map((n, ni) => hofNomRow(n, ci, ni, people)).join('')}
+        <div><button class="btn btn--ghost" type="button" data-act="hof-nom-add" data-ci="${ci}">+ Lisää ehdokas</button></div>
+      </div>
+    </fieldset>`).join('')}
+    <div><button class="btn btn--secondary btn--sm" type="button" data-act="hof-cat-add">+ Lisää kategoria</button></div>
+    <div class="edit-actions hof-form-actions">
+      <button class="btn btn--primary btn--sm" type="submit">Tallenna gaala</button>
       <button class="btn btn--ghost" type="button" data-act="hof-edit-cancel">Peruuta</button>
-      ${y ? `<button class="btn btn--ghost" type="button" data-act="hof-del" data-id="${y.id}">Poista vuosi</button>` : ''}
+      ${d.id ? `<button class="btn btn--ghost" type="button" data-act="hof-del" data-id="${d.id}">Poista vuosi</button>` : ''}
     </div>
   </form>`;
 }
 
 function hofAdmin() {
   const s = state; const years = s.hallOfFame || [];
-  const editing = hofEditing && hofEditing !== 'new' ? years.find((y) => y.id === hofEditing) : null;
   const thisYear = new Date().getFullYear();
   const archived = years.some((y) => y.year === thisYear);
   return `
@@ -236,8 +279,8 @@ function hofAdmin() {
       <p style="margin:0">Äänestys on suljettu. Lisää vuoden ${thisYear} finalistit ja voittajat Hall of Fameen. Tee tämä ennen kuin nollaat gaalan ensi vuotta varten.</p>
       <div><button class="btn btn--primary btn--sm" data-act="hof-archive" data-year="${thisYear}">Lisää gaala ${thisYear} Hall of Fameen</button></div>
     </div>` : ''}
-    ${editing ? hofForm(editing) : hofEditing === 'new' ? hofForm(null) : `<div class="item-actions">
-      <button class="btn btn--secondary btn--sm" data-act="hof-edit" data-id="new">Lisää aiempi gaala käsin</button>
+    ${hofDraft ? hofForm() : `<div class="item-actions">
+      <button class="btn btn--secondary btn--sm" data-act="hof-edit" data-id="new">+ Lisää aiempi gaala</button>
       ${years.map((y) => `<button class="btn btn--ghost" data-act="hof-edit" data-id="${y.id}">Muokkaa ${y.year}</button>`).join('')}
     </div>`}
   </div>`;
@@ -1093,6 +1136,7 @@ document.addEventListener('pointermove', (e) => {
 });
 document.addEventListener('pointerup', () => { cropDrag = null; });
 document.addEventListener('input', (e) => {
+  if (e.target.dataset.hof && hofDraft) hofInput(e.target, false);
   if (e.target.matches('[data-crop-zoom]') && cropping) { cropping.z = Number(e.target.value); applyCropPreview(); }
 });
 document.addEventListener('keydown', (e) => {
@@ -1143,6 +1187,26 @@ function resultsText() {
     const lines = noms.map((n) => `${winners.includes(n.id) ? '★ ' : '  '}${n.name}${n.reason ? ' – ' + n.reason : ''} (${n.finalVotes}${n.finalVoters.length ? ': ' + n.finalVoters.join(', ') : ''})`);
     return `${cat.name}\n${lines.join('\n')}`;
   }).join('\n\n');
+}
+
+// Hall of Fame -lomakkeen kentät luonnokseen. Henkilövalinta ja voittajaruutu piirretään heti uudelleen
+// (kuva, nimikenttä, korostus); tekstikentät päivittävät vain luonnoksen.
+function hofInput(el, changed) {
+  const d = hofDraft; const f = el.dataset.hof;
+  const c = d.categories[el.dataset.ci]; const n = c && c.nominees[el.dataset.ni];
+  d.dirty = true;
+  if (f === 'year') d.year = el.value;
+  else if (f === 'cat-name') c.name = el.value;
+  else if (f === 'cat-desc') c.description = el.value;
+  else if (f === 'name') n.name = el.value;
+  else if (f === 'reason') n.reason = el.value;
+  else if (f === 'winner' && changed) { n.winner = el.checked; render(); }
+  else if (f === 'person' && changed) {
+    n.other = el.value === '__other';
+    n.personId = n.other ? '' : el.value;
+    render();
+    if (n.other) document.getElementById(`hn-${el.dataset.ci}-${el.dataset.ni}`)?.focus();
+  }
 }
 
 // ---------- Tapahtumat ----------
@@ -1225,13 +1289,33 @@ document.addEventListener('click', async (e) => {
     }
     case 'photos-close': photosOpen = false; previewVersion = null; render(); window.scrollTo(0, 0); break;
     case 'hof-open': hofOpen = true; photosOpen = false; meCard = false; previewVersion = null; render(); window.scrollTo(0, 0); break;
-    case 'hof-close': hofOpen = false; hofEditing = null; render(); window.scrollTo(0, 0); break;
-    case 'hof-edit': hofEditing = id; render(); document.querySelector('.hof-form textarea')?.focus(); break;
-    case 'hof-edit-cancel': hofEditing = null; render(); break;
+    case 'hof-close':
+      if (hofDraft && hofDraft.dirty && !confirm('Hall of Fame -lomakkeessa on tallentamattomia muutoksia. Hylätäänkö ne?')) break;
+      hofOpen = false; hofDraft = null; render(); window.scrollTo(0, 0); break;
+    case 'hof-edit': openHofDraft(id); render(); document.querySelector('.hof-form')?.scrollIntoView({ block: 'start' }); document.getElementById('hc-0')?.focus({ preventScroll: true }); break;
+    case 'hof-edit-cancel':
+      if (hofDraft.dirty && !confirm('Hylätäänkö tallentamattomat muutokset?')) break;
+      hofDraft = null; render(); break;
+    case 'hof-cat-add':
+      hofDraft.categories.push(hofCategory()); hofDraft.dirty = true; render();
+      document.getElementById(`hc-${hofDraft.categories.length - 1}`)?.focus(); break;
+    case 'hof-cat-del': {
+      const c = hofDraft.categories[t.dataset.ci];
+      const filled = c.name || c.nominees.some((n) => n.personId || n.name || n.reason);
+      if (filled && !confirm(`Poistetaanko kategoria${c.name ? ` "${c.name}"` : ''}?`)) break;
+      hofDraft.categories.splice(t.dataset.ci, 1); hofDraft.dirty = true; render(); break;
+    }
+    case 'hof-nom-add': {
+      const list = hofDraft.categories[t.dataset.ci].nominees;
+      list.push(hofNominee()); hofDraft.dirty = true; render();
+      document.getElementById(`hp-${t.dataset.ci}-${list.length - 1}`)?.focus(); break;
+    }
+    case 'hof-nom-del':
+      hofDraft.categories[t.dataset.ci].nominees.splice(t.dataset.ni, 1); hofDraft.dirty = true; render(); break;
     case 'hof-del': {
       const y = (state.hallOfFame || []).find((x) => x.id === id);
       if (!y || !confirm(`Poistetaanko gaala ${y.year} Hall of Famesta? Tätä ei voi perua.`)) break;
-      try { await api('DELETE', `/api/admin/hof/${id}`, {}); hofEditing = null; render(); } catch {}
+      try { await api('DELETE', `/api/admin/hof/${id}`, {}); hofDraft = null; render(); } catch {}
       break;
     }
     case 'hof-archive':
@@ -1336,6 +1420,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('change', async (e) => {
   const t = e.target;
+  if (t.dataset.hof && hofDraft) { hofInput(t, true); return; }
   switch (t.dataset.act) {
     case 'final':
       if (isTest()) { simulate('final', { id: t.value, msg: 'Ääni tallennettu.' }); break; }
@@ -1648,10 +1733,13 @@ document.addEventListener('submit', async (e) => {
       editing = null; render();
       toast('Muutokset tallennettu.');
     } else if (f.dataset.form === 'hof') {
-      const k = f.dataset.id || 'new';
-      await api('POST', '/api/admin/hof', { id: f.dataset.id || undefined, year: v('hy-' + k), text: document.getElementById('ht-' + k).value });
-      clear('hy-' + k, 'ht-' + k);
-      hofEditing = null; render();
+      const d = hofDraft;
+      await api('POST', '/api/admin/hof', {
+        id: d.id || undefined, year: d.year,
+        categories: d.categories.map((c) => ({ name: c.name, description: c.description, nominees: c.nominees.map((n) => ({ personId: n.personId || null, name: n.other ? n.name : '', reason: n.reason, winner: n.winner })) })),
+      });
+      hofDraft = null; render();
+      document.querySelector('.hof-years, .hof-year')?.scrollIntoView({ block: 'start' });
     } else if (f.id === 'feedback-form') {
       const text = v('fb-text');
       if (!text) return;

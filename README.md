@@ -29,15 +29,7 @@ Yläpalkin **Hall of Fame** -napista aukeaa sivu, jolla näkyvät aiempien vuosi
 
 Adminit hallitsevat sivua sen alalaidasta:
 
-- **Lisää aiempi gaala käsin**: vuosi ja kategoriat tekstinä. Kategoriat erotetaan tyhjällä rivillä, ensimmäinen rivi on kategorian nimi, `>`-alkuinen rivi kuvaus (valinnainen) ja muut rivit ehdokkaita muodossa `Nimi – mistä`. Voittajan rivi alkaa `★`- tai `*`-merkillä. Osallistujan nimeä vastaava ehdokas saa tämän profiilikuvan. Myös "Kopioi tulokset tekstinä" -muodon voi liittää sellaisenaan.
-
-  ```
-  Vuoden sykähdyttävin hetki
-  > Hetki, joka jäi kaikkien mieleen.
-  ★ Matti – Juhannussaunan laulu
-  Liisa – Mökkiretken eksyminen
-  ```
-
+- **Lisää aiempi gaala**: lomake, jossa annetaan vuosi ja lisätään kategoriat (nimi ja valinnainen kuvaus). Jokaiseen kategoriaan valitaan ehdokkaat osallistujalistasta (kortissa näkyy osallistujan kuva) tai valinnalla "Joku muu…" kirjoitetaan nimi itse. Lisäksi voi kertoa, mistä ehdokas oli ehdolla. Voittaja merkitään "★ Voittaja" -valinnalla, ja tasapelissä niitä voi merkitä useamman. Tyhjiksi jätetyt ehdokasrivit ohitetaan tallennettaessa.
 - **Lisää gaala [vuosi] Hall of Fameen**: kun äänestys on suljettu (vaihe 5), tämän vuoden finalistit ja voittajat siirtyvät Hall of Fameen yhdellä napilla. Tee tämä ennen kuin nollaat gaalan seuraavaa vuotta varten. Nollaus ei poista Hall of Famea.
 - Tallennettuja vuosia voi muokata ja poistaa.
 

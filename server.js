@@ -427,37 +427,28 @@ function hofView() {
   }));
 }
 
-// Henkilön tunnistus nimestä (kirjainkoolla ei väliä), jotta käsin kirjoitetuille ehdokkaille löytyy kuva
-function personByName(name) {
-  const key = norm(name);
-  return Object.values(db.users).find((u) => !u.root && !u.tester && norm(u.name) === key) || null;
-}
-
-// Tekstimuoto: kategoriat tyhjällä rivillä erotettuina. Ensimmäinen rivi on kategorian nimi, "> kuvaus" -rivi
-// on valinnainen kuvaus ja muut rivit ehdokkaita muodossa "Nimi – peruste". Voittajan rivi alkaa ★- tai *-merkillä.
-// Hallinnan "Kopioi tulokset tekstinä" -muoto kelpaa sellaisenaan (äänimäärät lopussa ohitetaan).
-function parseHofText(text) {
-  const blocks = String(text || '').replace(/\r/g, '').split(/\n\s*\n/).map((b) => b.split('\n').map((l) => l.trim()).filter(Boolean)).filter((b) => b.length);
-  if (!blocks.length) fail(400, 'Kirjoita vähintään yksi kategoria.');
-  if (blocks.length > 40) fail(400, 'Liikaa kategorioita (max 40).');
-  return blocks.map((lines) => {
-    const name = clean(lines[0].replace(/^#+\s*/, ''), 80);
-    if (!name) fail(400, 'Kategorialta puuttuu nimi.');
-    let description = '';
+// Lomakkeelta tuleva rakenne: [{ name, description, nominees: [{ personId, name, reason, winner }] }].
+// Osallistujaan linkitetyn ehdokkaan nimi otetaan osallistujalta; muuten käytetään kirjoitettua nimeä.
+// Tyhjät ehdokasrivit ja kokonaan tyhjät kategoriat ohitetaan.
+function cleanHofCategories(list) {
+  if (!Array.isArray(list)) fail(400, 'Kategoriat puuttuvat.');
+  const out = [];
+  for (const c of list.slice(0, 40)) {
+    const name = clean(c && c.name, 80);
     const nominees = [];
-    for (const line of lines.slice(1)) {
-      if (line.startsWith('>')) { description = clean(line.slice(1), 200); continue; }
-      const winner = /^[★*]/.test(line);
-      const rest = line.replace(/^[★*]\s*/, '').replace(/^[-•]\s+/, '').replace(/\s*\(\d+[^)]*\)\s*$/, '');
-      const [rawName, ...why] = rest.split(/\s+[–—-]\s+/);
-      const nName = clean(rawName, 60);
+    for (const n of (Array.isArray(c && c.nominees) ? c.nominees : []).slice(0, 30)) {
+      const person = n && n.personId && db.users[n.personId] && !db.users[n.personId].root ? db.users[n.personId] : null;
+      const nName = person ? person.name : clean(n && n.name, 60);
       if (!nName) continue;
-      const person = personByName(nName);
-      nominees.push({ name: person ? person.name : nName, reason: clean(why.join(' – '), 160), personId: person ? person.id : null, winner });
+      nominees.push({ name: nName, reason: clean(n.reason, 160), personId: person ? person.id : null, winner: !!n.winner });
     }
-    if (nominees.length > 30) fail(400, `Liikaa ehdokkaita kategoriassa ${name} (max 30).`);
-    return { name, description, nominees };
-  });
+    if (!name && !nominees.length) continue;
+    if (!name) fail(400, 'Jokaisella kategorialla pitää olla nimi.');
+    if (!nominees.length) fail(400, `Lisää kategoriaan "${name}" vähintään yksi ehdokas.`);
+    out.push({ name, description: clean(c.description, 200), nominees });
+  }
+  if (!out.length) fail(400, 'Lisää vähintään yksi kategoria.');
+  return out;
 }
 
 function cleanYear(v) {
@@ -764,10 +755,10 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
   return db.users[user.id] ? { ...stateFor(user), notice } : { ...stateFor(null), notice };
 }, { admin: true });
 
-// Hall of Fame: vuoden lisäys tai muokkaus tekstinä (id puuttuu = uusi vuosi)
+// Hall of Fame: vuoden lisäys tai muokkaus lomakkeelta (id puuttuu = uusi vuosi)
 route('POST', '/api/admin/hof', ({ user, body }) => {
   const year = cleanYear(body.year);
-  const categories = parseHofText(body.text);
+  const categories = cleanHofCategories(body.categories);
   db.hallOfFame = db.hallOfFame || [];
   const entry = body.id ? db.hallOfFame.find((y) => y.id === body.id) : null;
   if (body.id && !entry) fail(404, 'Vuotta ei löydy.');
