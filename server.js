@@ -423,7 +423,7 @@ function hofView() {
     id: y.id, year: y.year,
     categories: y.categories.map((c) => ({
       name: c.name, description: c.description || '',
-      nominees: c.nominees.map((n) => ({ name: n.name, reason: n.reason || '', winner: !!n.winner, personId: n.personId && db.users[n.personId] ? n.personId : null, image: n.image || null, photo: db.settings.safeMode ? null : photoOf(n.image, null) })),
+      nominees: c.nominees.map((n) => ({ name: n.name, reason: n.reason || '', winner: !!n.winner, personId: n.personId && db.users[n.personId] ? n.personId : null, image: n.image || null, imageSrc: imgUrl(n.image), crop: n.crop || null, photo: db.settings.safeMode ? null : photoOf(n.image, n.crop) })),
     })),
   }));
 }
@@ -442,7 +442,9 @@ function cleanHofCategories(list) {
       const nName = person ? person.name : clean(n && n.name, 60);
       if (!nName) continue;
       const image = typeof n.image === 'string' && IMG_NAME.test(n.image) && fs.existsSync(path.join(IMG_DIR, n.image)) ? n.image : null;
-      nominees.push({ name: nName, reason: clean(n.reason, 160), personId: person ? person.id : null, winner: !!n.winner, image });
+      // Rajaus säilyy vain kuvan mukana (siirrosta tulleet ehdokaskorttien kuvat); uudelle kuvalle lomake lähettää null
+      const crop = image && n.crop ? cleanCrop(n.crop) : null;
+      nominees.push({ name: nName, reason: clean(n.reason, 160), personId: person ? person.id : null, winner: !!n.winner, image, crop });
     }
     if (!name && !nominees.length) continue;
     if (!name) fail(400, 'Jokaisella kategorialla pitää olla nimi.');
@@ -787,8 +789,17 @@ route('POST', '/api/admin/hof/image', ({ body }) => {
   return { image, src: imgUrl(image) };
 }, { admin: true, maxBody: 12 * 1024 * 1024 });
 
+// Ehdokaskortin oma kuva Hall of Fameen: tiedostosta tehdään kopio, jotta ehdokkaan poisto tai gaalan nollaus ei vie
+// sitä Hall of Famesta (eikä Hall of Famen muokkaus ehdokkaalta). Rajaus kopioidaan mukana.
+function copyCardPhoto(n) {
+  if (!n.photo || !IMG_NAME.test(n.photo)) return { image: null, crop: null };
+  const image = `${newId()}${path.extname(n.photo)}`;
+  try { fs.copyFileSync(path.join(IMG_DIR, n.photo), path.join(IMG_DIR, image)); } catch { return { image: null, crop: null }; }
+  return { image, crop: n.crop || null };
+}
+
 // Tämän vuoden tulokset Hall of Fameen: gaalaan päässeet kategoriat, finalistit ja voittajat (tasapelissä kaikki).
-// Kuvia ei kopioida profiilikuvista; Hall of Famen kuvat lisätään erikseen muokkauslomakkeella.
+// Ehdokaskorttien omat kuvat kopioidaan; profiilikuvia ei käytetä (puuttuvat kuvat lisätään muokkauslomakkeella).
 route('POST', '/api/admin/hof/archive', ({ user, body }) => {
   if (db.settings.phase !== 5) fail(409, 'Tulokset voi arkistoida, kun äänestys on suljettu (vaihe 5).');
   const year = cleanYear(body.year);
@@ -798,7 +809,7 @@ route('POST', '/api/admin/hof/archive', ({ user, body }) => {
   const winners = winnersFor(cats.map((c) => c.id));
   const categories = cats.map((c) => ({
     name: c.name, description: c.description || '',
-    nominees: db.nominees.filter((n) => n.categoryId === c.id && n.finalist).map((n) => ({ name: nomName(n), reason: n.reason || '', personId: n.personId || null, winner: winners[c.id].includes(n.id) }))
+    nominees: db.nominees.filter((n) => n.categoryId === c.id && n.finalist).map((n) => ({ name: nomName(n), reason: n.reason || '', personId: n.personId || null, winner: winners[c.id].includes(n.id), ...copyCardPhoto(n) }))
       .sort((a, b) => (b.winner - a.winner) || a.name.localeCompare(b.name, 'fi')),
   })).filter((c) => c.nominees.length);
   if (!categories.length) fail(409, 'Finalisteja ei ole, joten arkistoitavaa ei ole.');

@@ -197,7 +197,7 @@ function hofYear(y) {
 // ---------- Hall of Fame -lomake ----------
 // Luonnos pidetään muistissa ja päivitetään jokaisella näppäilyllä, joten taustapäivitys (render) ei hävitä sitä.
 // key: rivin pysyvä tunniste (kuvan lataus osuu oikealle riville, vaikka rivejä poistettaisiin latauksen aikana)
-const hofNominee = (n = {}) => ({ key: 'r' + Math.random().toString(36).slice(2, 10), personId: n.personId || '', name: n.name || '', reason: n.reason || '', winner: !!n.winner, other: !!(n.name && !n.personId), image: n.image || null, src: n.photo ? n.photo.src : null });
+const hofNominee = (n = {}) => ({ key: 'r' + Math.random().toString(36).slice(2, 10), personId: n.personId || '', name: n.name || '', reason: n.reason || '', winner: !!n.winner, other: !!(n.name && !n.personId), image: n.image || null, src: n.imageSrc || null, crop: n.crop || null });
 const hofRow = (key) => { for (const c of hofDraft ? hofDraft.categories : []) for (const n of c.nominees) if (n.key === key) return n; return null; };
 const hofCategory = (c = {}) => ({ name: c.name || '', description: c.description || '', nominees: c.nominees && c.nominees.length ? c.nominees.map(hofNominee) : [hofNominee(), hofNominee(), hofNominee()] });
 
@@ -220,7 +220,7 @@ function hofNomRow(n, ci, ni, people) {
   <div class="hof-edit-nom${n.winner ? ' is-winner' : ''}" data-drop-target="hof" data-drop-id="${n.key}">
     <div class="hof-edit-pic">
       <button type="button" class="hof-pic-btn" data-act="photo-pick" data-target="hof" data-id="${n.key}" title="${n.src ? 'Vaihda kuva' : 'Lisää kuva'}" aria-label="${n.src ? 'Vaihda kuva' : 'Lisää kuva'}: ehdokas ${ni + 1}">
-        ${n.src ? portrait({ name: label || '?', photo: { src: n.src } }, 'person-photo') : '<span class="person-photo hof-pic-empty" aria-hidden="true">+</span>'}
+        ${n.src ? portrait({ name: label || '?', photo: { src: n.src, ...(n.crop || {}) } }, 'person-photo') : '<span class="person-photo hof-pic-empty" aria-hidden="true">+</span>'}
       </button>
       ${n.src ? `<button type="button" class="hof-pic-del" data-act="hof-img-del" data-id="${n.key}">Poista kuva</button>` : '<span class="hof-pic-hint" aria-hidden="true">Kuva</span>'}
     </div>
@@ -1317,7 +1317,7 @@ document.addEventListener('click', async (e) => {
       list.push(hofNominee()); hofDraft.dirty = true; render();
       document.getElementById(`hp-${t.dataset.ci}-${list.length - 1}`)?.focus(); break;
     }
-    case 'hof-img-del': { const n = hofRow(id); if (n) { n.image = null; n.src = null; hofDraft.dirty = true; render(); } break; }
+    case 'hof-img-del': { const n = hofRow(id); if (n) { n.image = null; n.src = null; n.crop = null; hofDraft.dirty = true; render(); } break; }
     case 'hof-nom-del':
       hofDraft.categories[t.dataset.ci].nominees.splice(t.dataset.ni, 1); hofDraft.dirty = true; render(); break;
     case 'hof-del': {
@@ -1538,7 +1538,7 @@ async function uploadPhoto(tgt, file, via) {
     if (tgt.target === 'hof') { // Hall of Famen oma kuva: liitetään lomakkeen riviin, tallentuu "Tallenna gaala" -napista
       const r = await api('POST', '/api/admin/hof/image', { image });
       const n = hofRow(tgt.id);
-      if (n) { n.image = r.image; n.src = r.src; hofDraft.dirty = true; render(); toast('Kuva lisätty. Muista tallentaa gaala.'); }
+      if (n) { n.image = r.image; n.src = r.src; n.crop = null; hofDraft.dirty = true; render(); toast('Kuva lisätty. Muista tallentaa gaala.'); }
       uploadLog({ ...meta, result: 'onnistui', stage: `${via}/hof` });
       return;
     }
@@ -1751,7 +1751,7 @@ document.addEventListener('submit', async (e) => {
       const d = hofDraft;
       await api('POST', '/api/admin/hof', {
         id: d.id || undefined, year: d.year,
-        categories: d.categories.map((c) => ({ name: c.name, description: c.description, nominees: c.nominees.map((n) => ({ personId: n.personId || null, name: n.other ? n.name : '', reason: n.reason, winner: n.winner, image: n.image })) })),
+        categories: d.categories.map((c) => ({ name: c.name, description: c.description, nominees: c.nominees.map((n) => ({ personId: n.personId || null, name: n.other ? n.name : '', reason: n.reason, winner: n.winner, image: n.image, crop: n.crop })) })),
       });
       hofDraft = null; render();
       document.querySelector('.hof-years, .hof-year')?.scrollIntoView({ block: 'start' });
