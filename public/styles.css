@@ -887,3 +887,8 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
   .hof-edit-nom { grid-template-columns: 58px minmax(0, 1fr) auto; }
   .hof-edit-pic { grid-area: pic; align-self: start; }
 }
+/* Rajausikkunan selitteet: missä kukin esikatselu näkyy */
+.crop-fig { margin: 0; display: grid; gap: 6px; justify-items: center; }
+.crop-cap { display: grid; gap: 1px; font-size: 11px; line-height: 1.3; color: var(--ink-muted); text-align: center; max-width: 240px; }
+.crop-cap b { font-weight: 500; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold-text); }
+@media (max-width: 560px) { .crop-side .crop-cap { max-width: 120px; } }

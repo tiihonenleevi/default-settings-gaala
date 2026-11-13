@@ -1103,22 +1103,41 @@ function openCrop(target, id) {
   render();
 }
 
+// Missä kukin esikatselu näkyy sivulla (rajausikkunan selitteet). Ehdokaskortin omaa kuvaa ei käytetä
+// henkilökorteissa, joten sille ei näytetä henkilökortin esikatselua.
+const CROP_WHERE = {
+  user: { main: 'Ehdokaskortti · vaihe 3', final: 'Finaalikortti · vaihe 4', person: 'Henkilökortti · ehdokkaan valinta' },
+  safe: { main: 'Ehdokaskortti · Alle K18', final: 'Finaalikortti · Alle K18', person: 'Henkilökortti · Alle K18' },
+  nom: { main: 'Tämä ehdokaskortti · vaihe 3', final: 'Tämä finaalikortti · vaihe 4', person: '' },
+  hof: { main: 'Rajausalue', final: 'Hall of Fame · voittaja', person: 'Hall of Fame · muut ehdokkaat' },
+};
+
 function cropView() {
   const c = cropping; const ph = { src: c.src, x: c.x, y: c.y, z: c.z };
+  const where = CROP_WHERE[c.target] || CROP_WHERE.user;
   return `
   <div class="crop-overlay" role="dialog" aria-modal="true" aria-labelledby="crop-h">
     <div class="crop-dialog panel">
       <p class="eyebrow" id="crop-h">Rajaa ${c.target === 'safe' ? '&lt;18-kuva' : 'kuva'} · ${esc(c.name)}</p>
-      <p class="small muted" style="margin:0">Vedä kuvaa siirtääksesi, zoomaa liukusäätimellä. Esikatselu näyttää kortin sellaisena kuin osallistujat sen näkevät.${c.target === 'hof' ? ' Hall of Famessa voittaja näkyy isona korttina ja muut ehdokkaat pyöreänä kuvana.' : ''}</p>
+      <p class="small muted" style="margin:0">Vedä kuvaa siirtääksesi, zoomaa liukusäätimellä. Esikatselut näyttävät kuvan jokaisessa paikassa, jossa sitä käytetään.</p>
       <div class="crop-previews">
-        <article class="nom-card crop-card">
-          <div class="nom-media crop-frame" data-crop-frame>${portrait({ name: c.name, photo: ph })}</div>
-          <div class="nom-body"><h3 class="h3">${esc(c.name)}</h3><p>${esc(c.reason || (c.target === 'user' ? 'Ehdokaskortti' : ''))}</p></div>
-          <span class="btn btn--sm btn--secondary" aria-hidden="true">${c.target === 'hof' ? '★ Voittaja' : 'Äänestä'}</span>
-        </article>
+        <figure class="crop-fig">
+          <figcaption class="crop-cap"><b>${where.main}</b>Vedä kuvaa tässä</figcaption>
+          <article class="nom-card crop-card">
+            <div class="nom-media crop-frame" data-crop-frame>${portrait({ name: c.name, photo: ph })}</div>
+            <div class="nom-body"><h3 class="h3">${esc(c.name)}</h3><p>${esc(c.reason || (c.target === 'user' ? 'Ehdokaskortti' : ''))}</p></div>
+            <span class="btn btn--sm btn--secondary" aria-hidden="true">${c.target === 'hof' ? '★ Voittaja' : 'Äänestä'}</span>
+          </article>
+        </figure>
         <div class="crop-side">
-          <div class="final-card crop-final" aria-hidden="true">${portrait({ name: c.name, photo: ph }, 'final-photo')}<span class="final-body"><b>${esc(c.name)}</b></span></div>
-          <div class="person-card crop-person" aria-hidden="true">${portrait({ name: c.name, photo: ph }, 'person-photo')}<span class="person-name">${esc(c.name)}</span></div>
+          <figure class="crop-fig">
+            <figcaption class="crop-cap"><b>${where.final}</b></figcaption>
+            <div class="final-card crop-final" aria-hidden="true">${portrait({ name: c.name, photo: ph }, 'final-photo')}<span class="final-body"><b>${esc(c.name)}</b></span></div>
+          </figure>
+          ${where.person ? `<figure class="crop-fig">
+            <figcaption class="crop-cap"><b>${where.person}</b></figcaption>
+            <div class="person-card crop-person" aria-hidden="true">${portrait({ name: c.name, photo: ph }, 'person-photo')}<span class="person-name">${esc(c.name)}</span></div>
+          </figure>` : ''}
         </div>
       </div>
       <label class="crop-zoom"><span class="small muted">Zoom</span><input type="range" min="1" max="3" step="0.01" value="${c.z}" data-crop-zoom aria-label="Zoom"></label>
