@@ -222,7 +222,7 @@ function hofNomRow(n, ci, ni, people) {
       <button type="button" class="hof-pic-btn" data-act="photo-pick" data-target="hof" data-id="${n.key}" title="${n.src ? 'Vaihda kuva' : 'Lisää kuva'}" aria-label="${n.src ? 'Vaihda kuva' : 'Lisää kuva'}: ehdokas ${ni + 1}">
         ${n.src ? portrait({ name: label || '?', photo: { src: n.src, ...(n.crop || {}) } }, 'person-photo') : '<span class="person-photo hof-pic-empty" aria-hidden="true">+</span>'}
       </button>
-      ${n.src ? `<button type="button" class="hof-pic-del" data-act="hof-img-del" data-id="${n.key}">Poista kuva</button>` : '<span class="hof-pic-hint" aria-hidden="true">Kuva</span>'}
+      ${n.src ? `<button type="button" class="hof-pic-del" data-act="crop-open" data-target="hof" data-id="${n.key}">Rajaa</button><button type="button" class="hof-pic-del" data-act="hof-img-del" data-id="${n.key}">Poista</button>` : '<span class="hof-pic-hint" aria-hidden="true">Kuva</span>'}
     </div>
     <div class="hof-edit-who">
       <label class="sr-only" for="hp-${k}">Ehdokas ${ni + 1}</label>
@@ -1086,6 +1086,15 @@ function statsView() {
 // ---------- Rajausikkuna (admin) ----------
 // Vedä kuvaa siirtääksesi kohdistuspistettä, liukusäädin zoomaa. Esikatselu näyttää ehdokaskortin ja henkilökortin.
 function openCrop(target, id) {
+  if (target === 'hof') { // Hall of Fame -lomakkeen rivi: rajaus menee luonnokseen ja tallentuu gaalan mukana
+    const n = hofRow(id);
+    if (!n || !n.src) return;
+    const person = hofPeople().find((p) => p.id === n.personId);
+    const c = n.crop || {};
+    cropping = { target, id, src: n.src, x: c.x ?? 50, y: c.y ?? 50, z: c.z ?? 1, name: (person ? person.name : n.name) || 'Ehdokas', reason: n.reason || '' };
+    render();
+    return;
+  }
   const a = state.admin;
   const item = target === 'user' || target === 'safe' ? a.participants.find((p) => p.id === id) : a.nominees.find((n) => n.id === id);
   const ph = item && (target === 'safe' ? item.safePhoto : item.photo);
@@ -1100,12 +1109,12 @@ function cropView() {
   <div class="crop-overlay" role="dialog" aria-modal="true" aria-labelledby="crop-h">
     <div class="crop-dialog panel">
       <p class="eyebrow" id="crop-h">Rajaa ${c.target === 'safe' ? '&lt;18-kuva' : 'kuva'} · ${esc(c.name)}</p>
-      <p class="small muted" style="margin:0">Vedä kuvaa siirtääksesi, zoomaa liukusäätimellä. Esikatselu näyttää kortin sellaisena kuin osallistujat sen näkevät.</p>
+      <p class="small muted" style="margin:0">Vedä kuvaa siirtääksesi, zoomaa liukusäätimellä. Esikatselu näyttää kortin sellaisena kuin osallistujat sen näkevät.${c.target === 'hof' ? ' Hall of Famessa voittaja näkyy isona korttina ja muut ehdokkaat pyöreänä kuvana.' : ''}</p>
       <div class="crop-previews">
         <article class="nom-card crop-card">
           <div class="nom-media crop-frame" data-crop-frame>${portrait({ name: c.name, photo: ph })}</div>
           <div class="nom-body"><h3 class="h3">${esc(c.name)}</h3><p>${esc(c.reason || (c.target === 'user' ? 'Ehdokaskortti' : ''))}</p></div>
-          <span class="btn btn--sm btn--secondary" aria-hidden="true">Äänestä</span>
+          <span class="btn btn--sm btn--secondary" aria-hidden="true">${c.target === 'hof' ? '★ Voittaja' : 'Äänestä'}</span>
         </article>
         <div class="crop-side">
           <div class="final-card crop-final" aria-hidden="true">${portrait({ name: c.name, photo: ph }, 'final-photo')}<span class="final-body"><b>${esc(c.name)}</b></span></div>
@@ -1386,6 +1395,12 @@ document.addEventListener('click', async (e) => {
     case 'crop-reset': cropping.x = 50; cropping.y = 50; cropping.z = 1; applyCropPreview(); break;
     case 'crop-save': {
       const c = cropping;
+      if (c.target === 'hof') {
+        const n = hofRow(c.id);
+        if (n) { n.crop = { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 100) / 100 }; hofDraft.dirty = true; toast('Rajaus asetettu. Muista tallentaa gaala.'); }
+        cropping = null; render();
+        break;
+      }
       await api('POST', c.target === 'safe' ? `/api/admin/users/${c.id}/safe-crop` : `/api/admin/${c.target === 'user' ? 'users' : 'nominees'}/${c.id}/crop`, { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 100) / 100 })
         .then(() => { cropping = null; render(); }).catch(() => {});
       break;
@@ -1538,7 +1553,7 @@ async function uploadPhoto(tgt, file, via) {
     if (tgt.target === 'hof') { // Hall of Famen oma kuva: liitetään lomakkeen riviin, tallentuu "Tallenna gaala" -napista
       const r = await api('POST', '/api/admin/hof/image', { image });
       const n = hofRow(tgt.id);
-      if (n) { n.image = r.image; n.src = r.src; n.crop = null; hofDraft.dirty = true; render(); toast('Kuva lisätty. Muista tallentaa gaala.'); }
+      if (n) { n.image = r.image; n.src = r.src; n.crop = null; hofDraft.dirty = true; openCrop('hof', tgt.id); } // heti rajaukseen, kuten profiilikuvissa
       uploadLog({ ...meta, result: 'onnistui', stage: `${via}/hof` });
       return;
     }
