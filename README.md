@@ -30,7 +30,8 @@ Yläpalkin **Hall of Fame** -napista aukeaa sivu, jolla näkyvät aiempien vuosi
 Adminit hallitsevat sivua sen alalaidasta:
 
 - **Lisää aiempi gaala**: lomake, jossa annetaan vuosi ja lisätään kategoriat (nimi ja valinnainen kuvaus). Jokaiseen kategoriaan valitaan ehdokkaat osallistujalistasta (kortissa näkyy osallistujan kuva) tai valinnalla "Joku muu…" kirjoitetaan nimi itse. Lisäksi voi kertoa, mistä ehdokas oli ehdolla. Voittaja merkitään "★ Voittaja" -valinnalla, ja tasapelissä niitä voi merkitä useamman. Tyhjiksi jätetyt ehdokasrivit ohitetaan tallennettaessa.
-- **Lisää gaala [vuosi] Hall of Fameen**: kun äänestys on suljettu (vaihe 5), tämän vuoden finalistit ja voittajat siirtyvät Hall of Fameen yhdellä napilla. Tee tämä ennen kuin nollaat gaalan seuraavaa vuotta varten. Nollaus ei poista Hall of Famea.
+- **Kuvat**: Hall of Famen kuvat ovat omiaan, eivät osallistujien profiilikuvia. Kuva lisätään lomakkeella klikkaamalla rivin pyöreää kuvaa tai raahaamalla kuva riville, ja se tallentuu "Tallenna gaala" -napista. Osallistujan poisto tai profiilikuvan vaihto ei vaikuta Hall of Famen kuviin. Alle K18 -tilassa kuvien tilalla näkyy nimikirjain. Kuvat tallentuvat `data/images`-kansioon muiden kuvien tapaan.
+- **Lisää gaala [vuosi] Hall of Fameen**: kun äänestys on suljettu (vaihe 5), tämän vuoden finalistit ja voittajat siirtyvät Hall of Fameen yhdellä napilla (ilman kuvia: lisää ne muokkaamalla vuotta). Tee tämä ennen kuin nollaat gaalan seuraavaa vuotta varten. Nollaus ei poista Hall of Famea.
 - Tallennettuja vuosia voi muokata ja poistaa.
 
 ## Käynnistys

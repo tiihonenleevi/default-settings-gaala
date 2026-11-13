@@ -843,8 +843,8 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 .hof-form { gap: 20px; }
 .hof-form-head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
 .hof-year-field { width: 140px; }
-.hof-edit-cat { margin: 0; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: rgba(0, 0, 0, 0.22); display: grid; gap: 14px; min-width: 0; }
-.hof-edit-cat-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; }
+.hof-edit-cat { grid-template-columns: minmax(0, 1fr); margin: 0; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: rgba(0, 0, 0, 0.22); display: grid; gap: 14px; min-width: 0; }
+.hof-edit-cat-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; }
 .hof-edit-noms { display: grid; gap: 8px; }
 .hof-edit-nom {
   display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1.3fr) auto auto; align-items: center; gap: 10px;
@@ -866,9 +866,24 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 @media (max-width: 640px) {
   .hof-edit-cat { padding: 12px; }
   .hof-edit-nom { grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "pic who x" "pic why why" "pic win win"; gap: 8px; }
-  .hof-edit-nom .person-photo { grid-area: pic; align-self: start; }
   .hof-edit-who { grid-area: who; }
   .hof-edit-nom > .input { grid-area: why; }
   .hof-win-toggle { grid-area: win; justify-self: start; }
   .hof-x { grid-area: x; }
+}
+/* Hall of Fame -lomakkeen kuvat */
+.hof-edit-pic { display: grid; justify-items: center; gap: 2px; }
+.hof-pic-btn { padding: 0; border: 0; background: none; cursor: pointer; border-radius: 50%; }
+.hof-pic-btn:hover .person-photo { border-color: var(--gold-light); box-shadow: 0 0 14px rgba(243, 224, 156, 0.35); }
+.hof-pic-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.hof-pic-empty { border-style: dashed; color: var(--gold-text); font: 400 24px/1 var(--font-sans); background: rgba(0, 0, 0, 0.25); }
+.hof-pic-del, .hof-pic-hint { font-size: 10px; letter-spacing: 0.06em; color: var(--ink-muted); white-space: nowrap; }
+.hof-pic-del { padding: 2px 4px; border: 0; background: none; cursor: pointer; text-decoration: underline; }
+.hof-pic-del:hover { color: var(--gold-light); }
+.hof-edit-nom.drop-hover { border-color: var(--gold); box-shadow: var(--glow-gold); }
+.hof-edit-nom { grid-template-columns: 58px minmax(0, 1fr) minmax(0, 1.3fr) auto auto; }
+.hof-edit-nom .person-photo { width: 48px; height: 48px; }
+@media (max-width: 640px) {
+  .hof-edit-nom { grid-template-columns: 58px minmax(0, 1fr) auto; }
+  .hof-edit-pic { grid-area: pic; align-self: start; }
 }

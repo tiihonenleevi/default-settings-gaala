@@ -415,14 +415,15 @@ function adminView() {
 }
 
 // ---------- Hall of Fame ----------
-// Aiempien vuosien voittajat ja ehdokkaat. Henkilöön linkitetyn ehdokkaan kuva haetaan osallistujalta, joten
-// kuvat noudattavat myös Alle K18 -tilaa. Nimi tallennetaan erikseen, jotta se säilyy, vaikka osallistuja poistettaisiin.
+// Aiempien vuosien voittajat ja ehdokkaat. Hall of Famen kuvat ovat omia kuviaan (n.image), eivät osallistujien
+// profiilikuvia, joten osallistujan poisto tai profiilikuvan vaihto ei muuta niitä. Alle K18 -tilassa kuvat piilotetaan
+// (niille ei ole <18-versiota) ja tilalla näkyy nimikirjain. Nimi tallennetaan erikseen, joten se säilyy aina.
 function hofView() {
   return (db.hallOfFame || []).slice().sort((a, b) => b.year - a.year).map((y) => ({
     id: y.id, year: y.year,
     categories: y.categories.map((c) => ({
       name: c.name, description: c.description || '',
-      nominees: c.nominees.map((n) => ({ name: n.name, reason: n.reason || '', winner: !!n.winner, photo: n.personId ? displayPhoto(db.users[n.personId]) : null })),
+      nominees: c.nominees.map((n) => ({ name: n.name, reason: n.reason || '', winner: !!n.winner, personId: n.personId && db.users[n.personId] ? n.personId : null, image: n.image || null, photo: db.settings.safeMode ? null : photoOf(n.image, null) })),
     })),
   }));
 }
@@ -440,7 +441,8 @@ function cleanHofCategories(list) {
       const person = n && n.personId && db.users[n.personId] && !db.users[n.personId].root ? db.users[n.personId] : null;
       const nName = person ? person.name : clean(n && n.name, 60);
       if (!nName) continue;
-      nominees.push({ name: nName, reason: clean(n.reason, 160), personId: person ? person.id : null, winner: !!n.winner });
+      const image = typeof n.image === 'string' && IMG_NAME.test(n.image) && fs.existsSync(path.join(IMG_DIR, n.image)) ? n.image : null;
+      nominees.push({ name: nName, reason: clean(n.reason, 160), personId: person ? person.id : null, winner: !!n.winner, image });
     }
     if (!name && !nominees.length) continue;
     if (!name) fail(400, 'Jokaisella kategorialla pitää olla nimi.');
@@ -449,6 +451,13 @@ function cleanHofCategories(list) {
   }
   if (!out.length) fail(400, 'Lisää vähintään yksi kategoria.');
   return out;
+}
+
+// Hall of Famen kuvatiedostot, joita mikään vuosi ei enää käytä, poistetaan levyltä
+const hofImages = (entries) => new Set(entries.flatMap((y) => y.categories.flatMap((c) => c.nominees.map((n) => n.image).filter(Boolean))));
+function dropUnusedHofImages(before) {
+  const used = hofImages(db.hallOfFame || []);
+  for (const img of before) if (!used.has(img)) deleteImage(img);
 }
 
 function cleanYear(v) {
@@ -763,13 +772,23 @@ route('POST', '/api/admin/hof', ({ user, body }) => {
   const entry = body.id ? db.hallOfFame.find((y) => y.id === body.id) : null;
   if (body.id && !entry) fail(404, 'Vuotta ei löydy.');
   if (db.hallOfFame.some((y) => y.year === year && y !== entry)) fail(409, `Vuosi ${year} on jo Hall of Famessa. Muokkaa sitä.`);
+  const before = entry ? hofImages([entry]) : new Set();
   if (entry) Object.assign(entry, { year, categories, updatedAt: now() });
   else db.hallOfFame.push({ id: newId(), year, categories, createdAt: now() });
   writeDb();
+  dropUnusedHofImages(before);
   return { ...stateFor(user), notice: `Gaala ${year} tallennettu Hall of Fameen.` };
 }, { admin: true, maxBody: 60000 });
 
-// Tämän vuoden tulokset Hall of Fameen: gaalaan päässeet kategoriat, finalistit ja voittajat (tasapelissä kaikki)
+// Hall of Fame -ehdokkaan kuva: tallennetaan heti, ja lomake liittää tiedostonimen ehdokkaaseen tallennettaessa.
+// Kuva on erillinen tiedosto, ei osallistujan profiilikuva.
+route('POST', '/api/admin/hof/image', ({ body }) => {
+  const image = saveImage(body.image);
+  return { image, src: imgUrl(image) };
+}, { admin: true, maxBody: 12 * 1024 * 1024 });
+
+// Tämän vuoden tulokset Hall of Fameen: gaalaan päässeet kategoriat, finalistit ja voittajat (tasapelissä kaikki).
+// Kuvia ei kopioida profiilikuvista; Hall of Famen kuvat lisätään erikseen muokkauslomakkeella.
 route('POST', '/api/admin/hof/archive', ({ user, body }) => {
   if (db.settings.phase !== 5) fail(409, 'Tulokset voi arkistoida, kun äänestys on suljettu (vaihe 5).');
   const year = cleanYear(body.year);
@@ -793,6 +812,7 @@ route('DELETE', '/api/admin/hof/:id', ({ user, params }) => {
   if (!entry) fail(404, 'Vuotta ei löydy.');
   db.hallOfFame = db.hallOfFame.filter((y) => y !== entry);
   writeDb();
+  dropUnusedHofImages(hofImages([entry]));
   return { ...stateFor(user), notice: `Gaala ${entry.year} poistettu Hall of Famesta.` };
 }, { admin: true });
 

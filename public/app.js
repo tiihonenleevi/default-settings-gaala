@@ -196,7 +196,9 @@ function hofYear(y) {
 
 // ---------- Hall of Fame -lomake ----------
 // Luonnos pidetään muistissa ja päivitetään jokaisella näppäilyllä, joten taustapäivitys (render) ei hävitä sitä.
-const hofNominee = (n = {}) => ({ personId: n.personId || '', name: n.name || '', reason: n.reason || '', winner: !!n.winner, other: !!(n.name && !n.personId) });
+// key: rivin pysyvä tunniste (kuvan lataus osuu oikealle riville, vaikka rivejä poistettaisiin latauksen aikana)
+const hofNominee = (n = {}) => ({ key: 'r' + Math.random().toString(36).slice(2, 10), personId: n.personId || '', name: n.name || '', reason: n.reason || '', winner: !!n.winner, other: !!(n.name && !n.personId), image: n.image || null, src: n.photo ? n.photo.src : null });
+const hofRow = (key) => { for (const c of hofDraft ? hofDraft.categories : []) for (const n of c.nominees) if (n.key === key) return n; return null; };
 const hofCategory = (c = {}) => ({ name: c.name || '', description: c.description || '', nominees: c.nominees && c.nominees.length ? c.nominees.map(hofNominee) : [hofNominee(), hofNominee(), hofNominee()] });
 
 function openHofDraft(id) {
@@ -215,8 +217,13 @@ function hofNomRow(n, ci, ni, people) {
   const person = people.find((p) => p.id === n.personId);
   const label = person ? person.name : n.name;
   return `
-  <div class="hof-edit-nom${n.winner ? ' is-winner' : ''}">
-    ${portrait({ name: label || '?', photo: person ? person.photo : null }, 'person-photo')}
+  <div class="hof-edit-nom${n.winner ? ' is-winner' : ''}" data-drop-target="hof" data-drop-id="${n.key}">
+    <div class="hof-edit-pic">
+      <button type="button" class="hof-pic-btn" data-act="photo-pick" data-target="hof" data-id="${n.key}" title="${n.src ? 'Vaihda kuva' : 'Lisää kuva'}" aria-label="${n.src ? 'Vaihda kuva' : 'Lisää kuva'}: ehdokas ${ni + 1}">
+        ${n.src ? portrait({ name: label || '?', photo: { src: n.src } }, 'person-photo') : '<span class="person-photo hof-pic-empty" aria-hidden="true">+</span>'}
+      </button>
+      ${n.src ? `<button type="button" class="hof-pic-del" data-act="hof-img-del" data-id="${n.key}">Poista kuva</button>` : '<span class="hof-pic-hint" aria-hidden="true">Kuva</span>'}
+    </div>
     <div class="hof-edit-who">
       <label class="sr-only" for="hp-${k}">Ehdokas ${ni + 1}</label>
       <select class="input" id="hp-${k}" data-hof="person" data-ci="${ci}" data-ni="${ni}">
@@ -253,7 +260,7 @@ function hofForm() {
         <div class="field"><label for="hd-${ci}">Kuvaus (valinnainen)</label><input class="input" id="hd-${ci}" data-hof="cat-desc" data-ci="${ci}" value="${esc(c.description)}" maxlength="200" placeholder="Lyhyt selitys"></div>
       </div>
       <div class="hof-edit-noms">
-        <p class="small muted" style="margin:0">Ehdokkaat · rastita voittaja (tasapelissä useampi)</p>
+        <p class="small muted" style="margin:0">Ehdokkaat · rastita voittaja (tasapelissä useampi). Kuva on Hall of Famen oma, ei osallistujan profiilikuva: klikkaa pyöreää kuvaa tai raahaa kuva riville.</p>
         ${c.nominees.map((n, ni) => hofNomRow(n, ci, ni, people)).join('')}
         <div><button class="btn btn--ghost" type="button" data-act="hof-nom-add" data-ci="${ci}">+ Lisää ehdokas</button></div>
       </div>
@@ -1310,6 +1317,7 @@ document.addEventListener('click', async (e) => {
       list.push(hofNominee()); hofDraft.dirty = true; render();
       document.getElementById(`hp-${t.dataset.ci}-${list.length - 1}`)?.focus(); break;
     }
+    case 'hof-img-del': { const n = hofRow(id); if (n) { n.image = null; n.src = null; hofDraft.dirty = true; render(); } break; }
     case 'hof-nom-del':
       hofDraft.categories[t.dataset.ci].nominees.splice(t.dataset.ni, 1); hofDraft.dirty = true; render(); break;
     case 'hof-del': {
@@ -1453,7 +1461,7 @@ const PHOTO_ACCEPT = IS_MOBILE || APPLE_WEBKIT ? 'image/*' : 'image/*,.heic,.hei
 // Yksi pysyvä tiedostokenttä #app-alueen ulkopuolella. Sivu piirretään taustalla uudelleen 15 s välein ja
 // kun välilehti palaa näkyviin (esim. iPhonen kuvavalitsimen sulkeutuessa). Jos kenttä olisi näkymän sisällä,
 // valittu kuva palautuisi jo poistetulle kentälle ja katoaisi. Tätä kenttää uudelleenpiirto ei koske.
-let uploadTarget = null; // { target: 'user' | 'nom' | 'sugg', id }
+let uploadTarget = null; // { target: 'user' | 'nom' | 'sugg' | 'hof', id }
 const photoInput = document.createElement('input');
 photoInput.type = 'file';
 photoInput.accept = PHOTO_ACCEPT;
@@ -1527,6 +1535,13 @@ async function uploadPhoto(tgt, file, via) {
     const image = await imageToDataUrl(file, 1400, (d) => { meta.dims = d; }, (k) => { meta.kind = k; },
       (step) => { if (step !== 'aloitettu') uploadLog({ ...meta, result: 'vaihe', stage: `${via}/${step}` }); });
     stage = 'lähetys';
+    if (tgt.target === 'hof') { // Hall of Famen oma kuva: liitetään lomakkeen riviin, tallentuu "Tallenna gaala" -napista
+      const r = await api('POST', '/api/admin/hof/image', { image });
+      const n = hofRow(tgt.id);
+      if (n) { n.image = r.image; n.src = r.src; hofDraft.dirty = true; render(); toast('Kuva lisätty. Muista tallentaa gaala.'); }
+      uploadLog({ ...meta, result: 'onnistui', stage: `${via}/hof` });
+      return;
+    }
     if (tgt.target === 'sugg') {
       if (isTest()) { // testikäyttäjä: kuva näkyy vain omassa selaimessa
         state.photoSuggestions = [...(state.photoSuggestions || []), { id: 'test-' + Date.now(), personId: tgt.id, src: image, createdAt: new Date().toISOString(), mine: true, byName: state.me.name }];
@@ -1736,7 +1751,7 @@ document.addEventListener('submit', async (e) => {
       const d = hofDraft;
       await api('POST', '/api/admin/hof', {
         id: d.id || undefined, year: d.year,
-        categories: d.categories.map((c) => ({ name: c.name, description: c.description, nominees: c.nominees.map((n) => ({ personId: n.personId || null, name: n.other ? n.name : '', reason: n.reason, winner: n.winner })) })),
+        categories: d.categories.map((c) => ({ name: c.name, description: c.description, nominees: c.nominees.map((n) => ({ personId: n.personId || null, name: n.other ? n.name : '', reason: n.reason, winner: n.winner, image: n.image })) })),
       });
       hofDraft = null; render();
       document.querySelector('.hof-years, .hof-year')?.scrollIntoView({ block: 'start' });
