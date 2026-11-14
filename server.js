@@ -423,6 +423,8 @@ function adminView() {
 function hofView() {
   return (db.hallOfFame || []).slice().sort((a, b) => b.year - a.year).map((y) => ({
     id: y.id, year: y.year,
+    // Vuoden kansikuva otsikon alla (esim. ryhmäkuva gaalasta); Alle K18 -tilassa piilossa kuten muutkin kuvat
+    cover: y.cover ? { image: y.cover.image, imageSrc: imgUrl(y.cover.image), crop: y.cover.crop || null, photo: db.settings.safeMode ? null : photoOf(y.cover.image, y.cover.crop) } : null,
     categories: y.categories.map((c) => ({
       name: c.name, description: c.description || '',
       nominees: c.nominees.map((n) => ({ name: n.name, reason: n.reason || '', winner: !!n.winner, personId: n.personId && db.users[n.personId] ? n.personId : null, image: n.image || null, imageSrc: imgUrl(n.image), crop: n.crop || null, photo: db.settings.safeMode ? null : photoOf(n.image, n.crop) })),
@@ -458,7 +460,13 @@ function cleanHofCategories(list) {
 }
 
 // Hall of Famen kuvatiedostot, joita mikään vuosi ei enää käytä, poistetaan levyltä
-const hofImages = (entries) => new Set(entries.flatMap((y) => y.categories.flatMap((c) => c.nominees.map((n) => n.image).filter(Boolean))));
+const hofImages = (entries) => new Set(entries.flatMap((y) => [y.cover && y.cover.image, ...y.categories.flatMap((c) => c.nominees.map((n) => n.image))].filter(Boolean)));
+
+// Kansikuva lomakkeelta: { image, crop } tai null. Kuvan pitää olla ladattu (/api/admin/hof/image).
+function cleanHofCover(c) {
+  const image = c && typeof c.image === 'string' && IMG_NAME.test(c.image) && fs.existsSync(path.join(IMG_DIR, c.image)) ? c.image : null;
+  return image ? { image, crop: c.crop ? cleanCrop(c.crop) : null } : null;
+}
 function dropUnusedHofImages(before) {
   const used = hofImages(db.hallOfFame || []);
   for (const img of before) if (!used.has(img)) deleteImage(img);
@@ -772,13 +780,14 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
 route('POST', '/api/admin/hof', ({ user, body }) => {
   const year = cleanYear(body.year);
   const categories = cleanHofCategories(body.categories);
+  const cover = cleanHofCover(body.cover);
   db.hallOfFame = db.hallOfFame || [];
   const entry = body.id ? db.hallOfFame.find((y) => y.id === body.id) : null;
   if (body.id && !entry) fail(404, 'Vuotta ei löydy.');
   if (db.hallOfFame.some((y) => y.year === year && y !== entry)) fail(409, `Vuosi ${year} on jo Hall of Famessa. Muokkaa sitä.`);
   const before = entry ? hofImages([entry]) : new Set();
-  if (entry) Object.assign(entry, { year, categories, updatedAt: now() });
-  else db.hallOfFame.push({ id: newId(), year, categories, createdAt: now() });
+  if (entry) Object.assign(entry, { year, cover, categories, updatedAt: now() });
+  else db.hallOfFame.push({ id: newId(), year, cover, categories, createdAt: now() });
   writeDb();
   dropUnusedHofImages(before);
   return { ...stateFor(user), notice: `Gaala ${year} tallennettu Hall of Fameen.` };

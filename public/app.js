@@ -223,6 +223,7 @@ function hofYear(y) {
       <p class="eyebrow">${n} ${n === 1 ? 'kategoria' : 'kategoriaa'}</p>
       <h2 class="hof-year-title" id="hof-h-${y.year}">Gaala ${y.year}</h2>
     </header>
+    ${y.cover && y.cover.photo ? `<figure class="hof-cover"><img src="${y.cover.photo.src}" alt="Gaala ${y.year}" loading="lazy" style="${cropStyle(y.cover.photo)}"></figure>` : ''}
     ${y.categories.map((c) => {
       const wins = c.nominees.filter((x) => x.winner);
       const rest = c.nominees.filter((x) => !x.winner);
@@ -258,11 +259,11 @@ const hofCategory = (c = {}) => ({ name: c.name || '', description: c.descriptio
 
 function openHofDraft(id) {
   const y = (state.hallOfFame || []).find((x) => x.id === id);
-  if (y) { hofDraft = { id: y.id, year: String(y.year), categories: y.categories.map(hofCategory), dirty: false }; return; }
+  if (y) { hofDraft = { id: y.id, year: String(y.year), cover: y.cover ? { image: y.cover.image, src: y.cover.imageSrc, crop: y.cover.crop } : null, categories: y.categories.map(hofCategory), dirty: false }; return; }
   // Uusi: oletuksena viime vuosi, tai jos se on jo lisätty, vanhinta edeltävä vuosi
   const taken = (state.hallOfFame || []).map((x) => x.year);
   const year = (taken.length ? Math.min(...taken, new Date().getFullYear()) : new Date().getFullYear()) - 1;
-  hofDraft = { id: null, year: String(year), categories: [hofCategory()], dirty: false };
+  hofDraft = { id: null, year: String(year), cover: null, categories: [hofCategory()], dirty: false };
 }
 
 const hofPeople = () => (state.admin ? state.admin.participants.filter((p) => !p.tester).map((p) => ({ id: p.id, name: p.name, photo: p.shownPhoto })) : state.people || []);
@@ -295,6 +296,23 @@ function hofNomRow(n, ci, ni, people) {
   </div>`;
 }
 
+// Kansikuva: näkyy vuoden otsikon alla. Lisätään kuten ehdokkaiden kuvat (klikkaus, raahaus, liittäminen).
+function hofCoverEdit(d) {
+  const c = d.cover;
+  return `
+    <div class="hof-cover-edit" data-drop-target="hofcover" data-drop-id="cover" tabindex="-1">
+      <p class="small muted" style="margin:0">Kansikuva näkyy "Gaala ${esc(d.year)}" -otsikon alla (valinnainen). Klikkaa, raahaa kuva tähän tai klikkaa aluetta ja liitä kuva (Ctrl+V).</p>
+      ${c && c.src
+        ? `<div class="hof-cover hof-cover--edit"><img src="${c.src}" alt="" style="${cropStyle(c.crop || {})}"></div>
+           <div class="item-actions">
+             <button class="btn btn--ghost" type="button" data-act="photo-pick" data-target="hofcover" data-id="cover">Vaihda kuva</button>
+             <button class="btn btn--ghost" type="button" data-act="crop-open" data-target="hofcover" data-id="cover">Rajaa</button>
+             <button class="btn btn--ghost" type="button" data-act="hof-cover-del">Poista kuva</button>
+           </div>`
+        : `<button type="button" class="hof-cover-empty" data-act="photo-pick" data-target="hofcover" data-id="cover"><span aria-hidden="true">+</span> Lisää kansikuva</button>`}
+    </div>`;
+}
+
 function hofForm() {
   const d = hofDraft; const people = hofPeople();
   return `
@@ -303,6 +321,7 @@ function hofForm() {
       <p class="eyebrow">${d.id ? 'Muokkaa gaalaa' : 'Lisää aiempi gaala'}</p>
       <div class="field hof-year-field"><label for="hof-year">Vuosi</label><input class="input" id="hof-year" data-hof="year" type="number" inputmode="numeric" min="2000" max="2100" value="${esc(d.year)}"></div>
     </div>
+    ${hofCoverEdit(d)}
     ${d.categories.map((c, ci) => `
     <fieldset class="hof-edit-cat">
       <legend class="sr-only">Kategoria ${ci + 1}</legend>
@@ -1141,6 +1160,14 @@ function statsView() {
 // ---------- Rajausikkuna (admin) ----------
 // Vedä kuvaa siirtääksesi kohdistuspistettä, liukusäädin zoomaa. Esikatselu näyttää ehdokaskortin ja henkilökortin.
 function openCrop(target, id) {
+  if (target === 'hofcover') { // Hall of Famen kansikuva: rajaus luonnokseen
+    const cv = hofDraft && hofDraft.cover;
+    if (!cv || !cv.src) return;
+    const c = cv.crop || {};
+    cropping = { target, id, src: cv.src, x: c.x ?? 50, y: c.y ?? 50, z: c.z ?? 1, name: `Gaala ${hofDraft.year}`, reason: '' };
+    render();
+    return;
+  }
   if (target === 'hof') { // Hall of Fame -lomakkeen rivi: rajaus menee luonnokseen ja tallentuu gaalan mukana
     const n = hofRow(id);
     if (!n || !n.src) return;
@@ -1175,7 +1202,12 @@ function cropView() {
     <div class="crop-dialog panel">
       <p class="eyebrow" id="crop-h">Rajaa ${c.target === 'safe' ? '&lt;18-kuva' : 'kuva'} · ${esc(c.name)}</p>
       <p class="small muted" style="margin:0">Vedä kuvaa siirtääksesi, zoomaa liukusäätimellä. Esikatselut näyttävät kuvan jokaisessa paikassa, jossa sitä käytetään.</p>
-      <div class="crop-previews">
+      ${c.target === 'hofcover' ? `<div class="crop-previews">
+        <figure class="crop-fig crop-fig--wide">
+          <figcaption class="crop-cap"><b>Hall of Fame · kansikuva otsikon alla</b>Vedä kuvaa tässä</figcaption>
+          <div class="hof-cover crop-frame" data-crop-frame><img src="${c.src}" alt="" style="${cropStyle(ph)}"></div>
+        </figure>
+      </div>` : `<div class="crop-previews">
         <figure class="crop-fig">
           <figcaption class="crop-cap"><b>${where.main}</b>Vedä kuvaa tässä</figcaption>
           <article class="nom-card crop-card">
@@ -1194,7 +1226,7 @@ function cropView() {
             <div class="person-card crop-person" aria-hidden="true">${portrait({ name: c.name, photo: ph }, 'person-photo')}<span class="person-name">${esc(c.name)}</span></div>
           </figure>` : ''}
         </div>
-      </div>
+      </div>`}
       <label class="crop-zoom"><span class="small muted">Zoom</span><input type="range" min="1" max="3" step="0.01" value="${c.z}" data-crop-zoom aria-label="Zoom"></label>
       <div class="edit-actions"><button class="btn btn--primary btn--sm" type="button" data-act="crop-save">Tallenna rajaus</button><button class="btn btn--ghost" type="button" data-act="crop-reset">Keskitä</button><button class="btn btn--ghost" type="button" data-act="crop-cancel">Peruuta</button></div>
     </div>
@@ -1425,6 +1457,7 @@ document.addEventListener('click', async (e) => {
       list.push(hofNominee()); hofDraft.dirty = true; render();
       document.getElementById(`hp-${t.dataset.ci}-${list.length - 1}`)?.focus(); break;
     }
+    case 'hof-cover-del': if (hofDraft) { hofDraft.cover = null; hofDraft.dirty = true; render(); } break;
     case 'hof-img-del': { const n = hofRow(id); if (n) { n.image = null; n.src = null; n.crop = null; hofDraft.dirty = true; render(); } break; }
     case 'hof-nom-del':
       hofDraft.categories[t.dataset.ci].nominees.splice(t.dataset.ni, 1); hofDraft.dirty = true; render(); break;
@@ -1494,6 +1527,11 @@ document.addEventListener('click', async (e) => {
     case 'crop-reset': cropping.x = 50; cropping.y = 50; cropping.z = 1; applyCropPreview(); break;
     case 'crop-save': {
       const c = cropping;
+      if (c.target === 'hofcover') {
+        if (hofDraft && hofDraft.cover) { hofDraft.cover.crop = { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 100) / 100 }; hofDraft.dirty = true; toast('Rajaus asetettu. Muista tallentaa gaala.'); }
+        cropping = null; render();
+        break;
+      }
       if (c.target === 'hof') {
         const n = hofRow(c.id);
         if (n) { n.crop = { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 100) / 100 }; hofDraft.dirty = true; toast('Rajaus asetettu. Muista tallentaa gaala.'); }
@@ -1649,6 +1687,12 @@ async function uploadPhoto(tgt, file, via) {
     const image = await imageToDataUrl(file, 1400, (d) => { meta.dims = d; }, (k) => { meta.kind = k; },
       (step) => { if (step !== 'aloitettu') uploadLog({ ...meta, result: 'vaihe', stage: `${via}/${step}` }); });
     stage = 'lähetys';
+    if (tgt.target === 'hofcover') { // Hall of Famen kansikuva: luonnokseen, tallentuu "Tallenna gaala" -napista
+      const r = await api('POST', '/api/admin/hof/image', { image });
+      if (hofDraft) { hofDraft.cover = { image: r.image, src: r.src, crop: null }; hofDraft.dirty = true; openCrop('hofcover', 'cover'); }
+      uploadLog({ ...meta, result: 'onnistui', stage: `${via}/hofcover` });
+      return;
+    }
     if (tgt.target === 'hof') { // Hall of Famen oma kuva: liitetään lomakkeen riviin, tallentuu "Tallenna gaala" -napista
       const r = await api('POST', '/api/admin/hof/image', { image });
       const n = hofRow(tgt.id);
@@ -1737,7 +1781,8 @@ document.addEventListener('paste', (e) => {
   const url = file ? '' : pastedImageUrl(cd && cd.getData('text/html'), cd && cd.getData('text/plain'));
   const a = document.activeElement;
   const inText = !!(a && /INPUT|TEXTAREA/.test(a.tagName) && !['checkbox', 'radio'].includes(a.type));
-  const row = hofDraft ? ((a && a.closest && a.closest('.hof-edit-nom')) || document.querySelector('.hof-edit-nom:hover')) : null;
+  const ZONE = '.hof-edit-nom, .hof-cover-edit'; // ehdokkaan rivi tai kansikuva-alue
+  const row = hofDraft ? ((a && a.closest && a.closest(ZONE)) || document.querySelector('.hof-edit-nom:hover, .hof-cover-edit:hover')) : null;
   // Vianetsintä palvelimen lokiin (terminaali / docker logs: [kuvalataus]): mitä leikepöydältä tuli
   uploadLog({ name: file ? file.name : '', type: file ? file.type : '', size: file ? file.size : 0, result: 'liitä', stage: `liitä/${file ? 'kuva' : url ? 'kuvan osoite' : 'ei kuvaa'}${row ? ' rivillä' : ''}${hofDraft ? '' : ' (lomake kiinni)'}`, error: `tyypit: ${types || '-'}${url ? ` | osoite: ${url.slice(0, 80)}` : ''}` });
   if (!hofDraft) {
@@ -1749,13 +1794,13 @@ document.addEventListener('paste', (e) => {
   if (!row) {
     if (inText) return; // esim. kategorian nimi: teksti liitetään normaalisti
     e.preventDefault();
-    if (file || url) toast('Klikkaa ensin ehdokkaan riviä (esim. "Mistä?"-kenttää) ja liitä kuva sitten.', true);
+    if (file || url) toast('Klikkaa ensin ehdokkaan riviä (esim. "Mistä?"-kenttää) tai kansikuvan aluetta ja liitä kuva sitten.', true);
     return;
   }
   // Tekstikenttään liitetty pelkkä teksti menee tekstinä; kaikki muu rivillä yritetään kuvaksi
   if (!file && !url && inText) return;
   e.preventDefault();
-  const target = { target: 'hof', id: row.dataset.dropId };
+  const target = { target: row.dataset.dropTarget, id: row.dataset.dropId };
   (file ? Promise.resolve(file) : resolvePastedImage(url, types))
     .then((f) => readIntoMemory(f))
     .then((copy) => uploadPhoto(target, copy, 'liitä'))
@@ -1953,6 +1998,7 @@ document.addEventListener('submit', async (e) => {
       const d = hofDraft;
       await api('POST', '/api/admin/hof', {
         id: d.id || undefined, year: d.year,
+        cover: d.cover ? { image: d.cover.image, crop: d.cover.crop } : null,
         categories: d.categories.map((c) => ({ name: c.name, description: c.description, nominees: c.nominees.map((n) => ({ personId: n.personId || null, name: n.other ? n.name : '', reason: n.reason, winner: n.winner, image: n.image, crop: n.crop })) })),
       });
       hofDraft = null; hofYearSel = Number(d.year); syncHofUrl(false); render(); // tallennettu vuosi näkyviin
