@@ -786,6 +786,44 @@ route('POST', '/api/admin/hof', ({ user, body }) => {
 
 // Hall of Fame -ehdokkaan kuva: tallennetaan heti, ja lomake liittää tiedostonimen ehdokkaaseen tallennettaessa.
 // Kuva on erillinen tiedosto, ei osallistujan profiilikuva.
+// Kuvan haku osoitteesta Hall of Fame -lomakkeen liittämistä varten. Google Slidesistä/Docsista kopioidun
+// kuvan leikepöydällä on vain linkki Googlen kuvapalvelimelle, jota selain ei saa ladata toiselta sivustolta.
+// Palvelin hakee kuvan, mutta vain Googlen kuvapalvelimilta (ei mielivaltaisia osoitteita eikä sisäverkkoa).
+const IMAGE_FETCH_HOSTS = [/(^|\.)googleusercontent\.com$/i];
+const IMAGE_FETCH_MAX = 10 * 1024 * 1024;
+const allowedImageUrl = (u) => u.protocol === 'https:' && IMAGE_FETCH_HOSTS.some((re) => re.test(u.hostname));
+function sniffImageType(b) {
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.slice(0, 4).toString('hex') === '89504e47') return 'image/png';
+  if (b.slice(0, 4).toString() === 'RIFF' && b.slice(8, 12).toString() === 'WEBP') return 'image/webp';
+  if (b.slice(0, 4).toString() === 'GIF8') return 'image/gif';
+  return null;
+}
+async function fetchRemoteImage(raw) {
+  let url;
+  try { url = new URL(String(raw || '')); } catch { fail(400, 'Virheellinen kuvan osoite.'); }
+  for (let hop = 0; hop < 4; hop++) {
+    if (!allowedImageUrl(url)) fail(400, 'Kuvaa voi hakea vain Google Slidesistä tai Docsista kopioidusta linkistä. Tallenna kuva ja raahaa se riville.');
+    let res;
+    try { res = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(15000) }); } catch { fail(502, 'Kuvan haku epäonnistui. Tarkista nettiyhteys tai tallenna kuva ja raahaa se riville.'); }
+    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) { url = new URL(res.headers.get('location'), url); continue; }
+    if (!res.ok) fail(502, `Kuvaa ei saatu haettua (${res.status}). Linkki on voinut vanhentua: kopioi kuva uudelleen.`);
+    if (Number(res.headers.get('content-length')) > IMAGE_FETCH_MAX) fail(413, 'Kuva on liian suuri (max 10 Mt).');
+    const chunks = []; let size = 0;
+    for await (const c of res.body) { size += c.length; if (size > IMAGE_FETCH_MAX) fail(413, 'Kuva on liian suuri (max 10 Mt).'); chunks.push(c); }
+    const data = Buffer.concat(chunks);
+    // Tyyppi tunnistetaan sisällöstä; otsakkeeseen ei luoteta (se voi puuttua tai olla geneerinen)
+    const type = sniffImageType(data) || fail(400, 'Linkin takana ei ole kuvaa.');
+    return { type, data };
+  }
+  fail(502, 'Liikaa uudelleenohjauksia kuvan haussa.');
+}
+// Palauttaa kuvan selaimelle data-osoitteena: selain pienentää ja lähettää sen samaa reittiä kuin muutkin kuvat
+route('POST', '/api/admin/fetch-image', async ({ body }) => {
+  const { type, data } = await fetchRemoteImage(body.url);
+  return { image: `data:${type};base64,${data.toString('base64')}` };
+}, { admin: true, maxBody: 20000 });
+
 route('POST', '/api/admin/hof/image', ({ body }) => {
   const image = saveImage(body.image);
   return { image, src: imgUrl(image) };

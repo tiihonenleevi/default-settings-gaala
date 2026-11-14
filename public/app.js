@@ -1707,6 +1707,14 @@ async function resolvePastedImage(url, types) {
       const blob = await res.blob();
       if (res.ok && /^image\//.test(blob.type)) return new File([blob], `liitetty.${(blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: blob.type });
     } catch { /* toinen sivusto estää latauksen */ }
+    // Google Slides / Docs: kuva on Googlen palvelimella, jota selain ei saa ladata; palvelin hakee sen
+    if (/^https:\/\/[^/]*googleusercontent\.com\//i.test(url)) {
+      const res = await fetch('/api/admin/fetch-image', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ url }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Kuvan haku epäonnistui.');
+      const blob = await (await fetch(data.image)).blob();
+      return new File([blob], `liitetty.${(blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: blob.type });
+    }
   }
   if (navigator.clipboard && navigator.clipboard.read) {
     try {
