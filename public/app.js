@@ -315,7 +315,7 @@ function hofForm() {
         <div class="field"><label for="hd-${ci}">Kuvaus (valinnainen)</label><input class="input" id="hd-${ci}" data-hof="cat-desc" data-ci="${ci}" value="${esc(c.description)}" maxlength="200" placeholder="Lyhyt selitys"></div>
       </div>
       <div class="hof-edit-noms">
-        <p class="small muted" style="margin:0">Ehdokkaat · rastita voittaja (tasapelissä useampi). Kuva on Hall of Famen oma, ei osallistujan profiilikuva: klikkaa pyöreää kuvaa tai raahaa kuva riville.</p>
+        <p class="small muted" style="margin:0">Ehdokkaat · rastita voittaja (tasapelissä useampi). Kuva on Hall of Famen oma, ei osallistujan profiilikuva: klikkaa pyöreää kuvaa, raahaa kuva riville tai klikkaa riviä ja liitä kuva (Ctrl+V).</p>
         ${c.nominees.map((n, ni) => hofNomRow(n, ci, ni, people)).join('')}
         <div><button class="btn btn--ghost" type="button" data-act="hof-nom-add" data-ci="${ci}">+ Lisää ehdokas</button></div>
       </div>
@@ -1673,6 +1673,29 @@ async function uploadPhoto(tgt, file, via) {
     if (err && err.message && stage === 'luku') toast(err.message, true); // lähetysvirheen api() näytti jo
   }
 }
+
+// Liitä (Ctrl+V / Cmd+V): Hall of Fame -lomakkeessa leikepöydän kuva menee riville, jolla kursori on
+// (esim. "Mistä?"-kentässä) tai jonka päällä hiiri on. Jos leikepöydällä on myös tekstiä ja kursori on
+// tekstikentässä, liitetään teksti tavalliseen tapaan.
+function pastedImage(e) {
+  const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+  const item = items.find((x) => x.kind === 'file' && /^image\//.test(x.type));
+  return item ? item.getAsFile() : null;
+}
+document.addEventListener('paste', (e) => {
+  if (!hofDraft || !hofOpen || cropping) return;
+  const file = pastedImage(e);
+  if (!file) return;
+  const a = document.activeElement;
+  const inText = a && /INPUT|TEXTAREA/.test(a.tagName) && !['checkbox', 'radio'].includes(a.type);
+  if (inText && e.clipboardData.types.includes('text/plain')) return; // teksti tekstikenttään
+  const row = (a && a.closest && a.closest('.hof-edit-nom')) || document.querySelector('.hof-edit-nom:hover');
+  e.preventDefault();
+  if (!row) { toast('Klikkaa ensin ehdokkaan riviä (esim. "Mistä?"-kenttää) ja liitä kuva sitten.', true); return; }
+  readIntoMemory(file)
+    .then((copy) => uploadPhoto({ target: 'hof', id: row.dataset.dropId }, copy, 'liitä'))
+    .catch((err) => { uploadLog({ name: file.name, type: file.type, size: file.size, result: 'virhe', stage: 'liitä/muistiin luku', error: err.detail || err.message }); toast('Kuvaa ei voitu lukea.', true); });
+});
 
 // Raahaa ja pudota: kuvan voi pudottaa osallistujan tai ehdokkaan riville hallinnassa
 const dragFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');

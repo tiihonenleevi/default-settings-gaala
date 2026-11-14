@@ -936,3 +936,5 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
   /* puhelimessa "piilossa"-merkki pienenä pisteenä napin kulmassa, jotta teksti mahtuu riville */
   .topbar .whoami .hof-btn .hof-hidden-tag { position: absolute; top: 4px; right: 6%; width: 7px; height: 7px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: var(--gold); font-size: 0; }
 }
+/* Hall of Fame -lomake: rivi, jolle liitetty kuva menee (kursori rivillä) */
+.hof-edit-nom:focus-within { border-color: rgba(210, 175, 87, 0.45); }
