@@ -1,4 +1,4 @@
-// Default Settings Gaala – äänestyspalvelin
+// HerrasmiesKlubi Gaala – äänestyspalvelin
 // Ei riippuvuuksia: Node.js 18+ riittää. Data tallentuu tiedostoon data/db.json.
 'use strict';
 
@@ -1181,7 +1181,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Default Settings Gaala käynnissä: http://${HOST}:${PORT}`);
+  console.log(`HerrasmiesKlubi Gaala käynnissä: http://${HOST}:${PORT}`);
   // Auttaa vianetsinnässä paljastamatta koodia: näyttää pituuden ja ensimmäisen merkin
   console.log(`ADMIN_CODE ladattu: ${ADMIN_CODE.length} merkkiä, alkaa "${ADMIN_CODE[0]}"${ADMIN_CODE === 'vaihda-tama-pitkaan-koodiin' ? ' – HUOM: tämä on esimerkkiarvo, vaihda se .env-tiedostoon!' : ''}`);
 });

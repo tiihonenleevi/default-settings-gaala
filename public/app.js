@@ -1,5 +1,5 @@
 'use strict';
-/* Default Settings Gaala – käyttöliittymä (ei riippuvuuksia) */
+/* HerrasmiesKlubi Gaala – käyttöliittymä (ei riippuvuuksia) */
 
 let state = null;
 let showFinalCounts = false;
@@ -78,9 +78,14 @@ function render() {
   if (cur) tabs.scrollLeft = cur.offsetLeft - (tabs.clientWidth - cur.offsetWidth) / 2;
 }
 
+// Sivun alaosa: gaalan järjestäjä
+function footer() {
+  return '<footer class="footer"><span>Default Settings Oy</span></footer>';
+}
+
 // ---------- Kirjautuminen ----------
 function brand() {
-  return `<a class="brand" href="/" aria-label="Default Settings Gaala"><img class="brand-trophy" src="/logo.svg" alt="" width="108" height="236"><span class="brand-text" aria-hidden="true"><span class="brand-eyebrow">Default Settings</span><span class="brand-name">Gaala</span></span></a>`;
+  return `<a class="brand" href="/" aria-label="HerrasmiesKlubi Gaala"><img class="brand-trophy" src="/logo.svg" alt="" width="108" height="236"><span class="brand-text" aria-hidden="true"><span class="brand-eyebrow">HerrasmiesKlubi</span><span class="brand-name">Gaala</span></span></a>`;
 }
 
 function loginView() {
@@ -114,16 +119,14 @@ function mainView() {
     <div class="whoami">${hofButton()}${suggestButton()}${whoami()}<button class="btn btn--ghost" data-act="logout">Kirjaudu ulos</button></div>
   </div></header>
   ${s.me.tester ? testBar() : ''}
-  ${hofOpen ? `<main class="wrap">${hofView()}<footer class="footer"><span>Default Settings Gaala</span></footer></main>` : photosOpen ? `<main class="wrap">${photosView()}<footer class="footer"><span>Default Settings Gaala</span></footer></main>` : `<main class="wrap">
+  ${hofOpen ? `<main class="wrap">${hofView()}${footer()}</main>` : photosOpen ? `<main class="wrap">${photosView()}${footer()}</main>` : `<main class="wrap">
     <section class="hero">
       ${stepper()}
       ${isWaiting() ? '' : phaseHero()}
     </section>
     ${s.me.root ? `<div class="panel"><p class="eyebrow">Ylläpitotunnus</p><p style="margin:0">Tällä tunnuksella hallinnoidaan, mutta ei äänestetä. Lisää itsesi osallistujaksi alta, anna itsellesi admin-oikeus ja kirjaudu omalla koodillasi.</p></div>` : phaseBody()}
     ${s.me.admin ? (s.me.tester && s.phase !== s.realPhase ? `<div class="panel" style="margin-top:48px"><p class="eyebrow">Hallinta</p><p class="small muted" style="margin:0">Hallinta on piilotettu, kun esikatselet muuta kuin oikeaa vaihetta (${s.realPhase}). Palaa oikeaan vaiheeseen testipalkista.</p></div>` : adminView()) : ''}
-    <footer class="footer">
-      <span>Default Settings Gaala</span>
-    </footer>
+    ${footer()}
   </main>`}
   ${cropping ? cropView() : ''}
   ${stats ? statsView() : ''}
@@ -170,7 +173,7 @@ function hofView() {
     <header class="hero-head screen-center">
       <p class="eyebrow">Hall of Fame</p>
       <h1 class="h1">Edellisten vuosien voittajat</h1>
-      <p class="lead">${years.length > 1 ? `Default Settings Gaala vuodesta ${years[years.length - 1].year} lähtien.` : 'Täällä elävät aiempien gaalojen voittajat ja ehdokkaat.'}</p>
+      <p class="lead">${years.length > 1 ? `HerrasmiesKlubi Gaala vuodesta ${years[years.length - 1].year} lähtien.` : 'Täällä elävät aiempien gaalojen voittajat ja ehdokkaat.'}</p>
       <div><button class="btn btn--secondary btn--sm" data-act="hof-close">Takaisin gaalaan</button></div>
     </header>
     ${admin && s.admin ? hofVisibility() : ''}

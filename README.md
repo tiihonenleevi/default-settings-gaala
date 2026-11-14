@@ -1,4 +1,6 @@
-# Default Settings Gaala
+# HerrasmiesKlubi Gaala
+
+Järjestäjä: Default Settings Oy.
 
 Kaveriporukan palkintogaalan äänestyssivu. Ei riippuvuuksia: tarvitaan vain Node.js 18 tai uudempi. Data tallentuu tiedostoon `data/db.json`.
 
@@ -57,7 +59,7 @@ Koodi on henkilökohtainen, joten äänirajat ja anonymiteetti toimivat koodin k
 ```ini
 # /etc/systemd/system/gaala.service
 [Unit]
-Description=Default Settings Gaala
+Description=HerrasmiesKlubi Gaala
 After=network.target
 
 [Service]
