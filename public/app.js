@@ -1685,29 +1685,73 @@ function pastedImage(cd) {
   // Resurssienhallinnasta kopioitu tiedosto tulee joissain selaimissa vain files-listassa (ja tyyppi voi puuttua)
   return Array.from(cd.files || []).find((x) => /^image\//.test(x.type) || /\.(jpe?g|png|webp|gif|heic|heif|avif)$/i.test(x.name)) || null;
 }
+
+// Kuvan osoite leikepöydän HTML:stä tai tekstistä. Verkkosivulta Ctrl+C:llä kopioitu kuva (tai osa sivua)
+// tulee HTML-pätkänä, jossa on <img src="...">; jotkin sovellukset upottavat kuvan data:-osoitteena.
+function pastedImageUrl(html, text) {
+  if (html) {
+    const img = new DOMParser().parseFromString(html, 'text/html').querySelector('img[src]');
+    if (img) return img.getAttribute('src');
+  }
+  const t = String(text || '').trim();
+  return /^data:image\//i.test(t) || /^https?:\/\/\S+\.(jpe?g|png|webp|gif|avif)(\?\S*)?$/i.test(t) ? t : '';
+}
+
+const PASTE_HELP = 'Kokeile: klikkaa kuvaa hiiren oikealla → "Kopioi kuva", tai tallenna kuva koneelle ja raahaa se riville.';
+
+// Kuva liitetystä osoitteesta tai suoraan leikepöydältä (jos selain ei antanut kuvaa liittämistapahtumassa)
+async function resolvePastedImage(url, types) {
+  if (url) {
+    try {
+      const res = await fetch(url, { credentials: 'omit' }); // data: aina, muut sivustot vain jos ne sallivat
+      const blob = await res.blob();
+      if (res.ok && /^image\//.test(blob.type)) return new File([blob], `liitetty.${(blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: blob.type });
+    } catch { /* toinen sivusto estää latauksen */ }
+  }
+  if (navigator.clipboard && navigator.clipboard.read) {
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find((t) => /^image\//.test(t));
+        if (type) { const blob = await item.getType(type); return new File([blob], `liitetty.${type.split('/')[1]}`, { type }); }
+      }
+    } catch { /* lupa evätty tai ei tuettu */ }
+  }
+  throw new Error(url && !/^data:/i.test(url)
+    ? `Leikepöydällä on vain linkki kuvaan toisella sivustolla, eikä se sivusto anna ladata kuvaa. ${PASTE_HELP}`
+    : `Leikepöydältä ei löytynyt kuvaa (sisältö: ${types || 'tyhjä'}). ${PASTE_HELP}`);
+}
+
 document.addEventListener('paste', (e) => {
   if (!hofOpen || !state || !state.me || !state.me.admin || cropping) return;
   const cd = e.clipboardData;
   const file = pastedImage(cd);
+  const types = Array.from((cd && cd.types) || []).join(', ');
+  const url = file ? '' : pastedImageUrl(cd && cd.getData('text/html'), cd && cd.getData('text/plain'));
   const a = document.activeElement;
   const inText = !!(a && /INPUT|TEXTAREA/.test(a.tagName) && !['checkbox', 'radio'].includes(a.type));
   const row = hofDraft ? ((a && a.closest && a.closest('.hof-edit-nom')) || document.querySelector('.hof-edit-nom:hover')) : null;
-  // Vianetsintä palvelimen lokiin (docker logs / konsoli: [kuvalataus]): mitä leikepöydältä tuli
-  uploadLog({ name: file ? file.name : '', type: file ? file.type : '', size: file ? file.size : 0, result: 'liitä', stage: `liitä/${file ? 'kuva' : 'ei kuvaa'}${row ? ' rivillä' : ''}${hofDraft ? '' : ' (lomake kiinni)'}`, error: `tyypit: ${Array.from((cd && cd.types) || []).join(', ') || '-'}` });
-  if (!file) {
-    if (!inText) toast(hofDraft ? 'Leikepöydällä ei ole kuvaa. Kopioi kuva (ei kuvan osoitetta) ja liitä uudelleen.' : 'Avaa ensin gaalan muokkaus ("Muokkaa" tai "+ Lisää aiempi gaala") ja liitä kuva ehdokkaan riville.', true);
-    return; // teksti liitetään tekstikenttään tavalliseen tapaan
-  }
-  if (!row) {
-    if (inText && cd.types.includes('text/plain')) return; // esim. kategorian nimi: teksti normaalisti
+  // Vianetsintä palvelimen lokiin (terminaali / docker logs: [kuvalataus]): mitä leikepöydältä tuli
+  uploadLog({ name: file ? file.name : '', type: file ? file.type : '', size: file ? file.size : 0, result: 'liitä', stage: `liitä/${file ? 'kuva' : url ? 'kuvan osoite' : 'ei kuvaa'}${row ? ' rivillä' : ''}${hofDraft ? '' : ' (lomake kiinni)'}`, error: `tyypit: ${types || '-'}${url ? ` | osoite: ${url.slice(0, 80)}` : ''}` });
+  if (!hofDraft) {
+    if (inText || (!file && !url)) return;
     e.preventDefault();
-    toast(hofDraft ? 'Klikkaa ensin ehdokkaan riviä (esim. "Mistä?"-kenttää) ja liitä kuva sitten.' : 'Avaa ensin gaalan muokkaus ("Muokkaa" tai "+ Lisää aiempi gaala") ja liitä kuva ehdokkaan riville.', true);
+    toast('Avaa ensin gaalan muokkaus ("Muokkaa" tai "+ Lisää aiempi gaala") ja liitä kuva ehdokkaan riville.', true);
     return;
   }
+  if (!row) {
+    if (inText) return; // esim. kategorian nimi: teksti liitetään normaalisti
+    e.preventDefault();
+    if (file || url) toast('Klikkaa ensin ehdokkaan riviä (esim. "Mistä?"-kenttää) ja liitä kuva sitten.', true);
+    return;
+  }
+  // Tekstikenttään liitetty pelkkä teksti menee tekstinä; kaikki muu rivillä yritetään kuvaksi
+  if (!file && !url && inText) return;
   e.preventDefault();
-  readIntoMemory(file)
-    .then((copy) => uploadPhoto({ target: 'hof', id: row.dataset.dropId }, copy, 'liitä'))
-    .catch((err) => { uploadLog({ name: file.name, type: file.type, size: file.size, result: 'virhe', stage: 'liitä/muistiin luku', error: err.detail || err.message }); toast('Kuvaa ei voitu lukea.', true); });
+  const target = { target: 'hof', id: row.dataset.dropId };
+  (file ? Promise.resolve(file) : resolvePastedImage(url, types))
+    .then((f) => readIntoMemory(f))
+    .then((copy) => uploadPhoto(target, copy, 'liitä'))
+    .catch((err) => { uploadLog({ result: 'virhe', stage: 'liitä/kuvan haku', error: `${err.detail || err.message} | tyypit: ${types || '-'}` }); toast(err.message || 'Kuvaa ei voitu lukea.', true); });
 });
 
 // Raahaa ja pudota: kuvan voi pudottaa osallistujan tai ehdokkaan riville hallinnassa
