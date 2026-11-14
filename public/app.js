@@ -1675,23 +1675,36 @@ async function uploadPhoto(tgt, file, via) {
 }
 
 // Liitä (Ctrl+V / Cmd+V): Hall of Fame -lomakkeessa leikepöydän kuva menee riville, jolla kursori on
-// (esim. "Mistä?"-kentässä) tai jonka päällä hiiri on. Jos leikepöydällä on myös tekstiä ja kursori on
-// tekstikentässä, liitetään teksti tavalliseen tapaan.
-function pastedImage(e) {
-  const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
-  const item = items.find((x) => x.kind === 'file' && /^image\//.test(x.type));
-  return item ? item.getAsFile() : null;
+// (esim. "Mistä?"-kenttä) tai jonka päällä hiiri on. Selaimesta kopioidun kuvan mukana tulee usein myös
+// tekstiä (kuvan osoite), joten rivillä kuva voittaa aina tekstin. Muualla teksti liitetään normaalisti.
+function pastedImage(cd) {
+  if (!cd) return null;
+  const item = Array.from(cd.items || []).find((x) => x.kind === 'file' && /^image\//.test(x.type));
+  const f = item && item.getAsFile();
+  if (f) return f;
+  // Resurssienhallinnasta kopioitu tiedosto tulee joissain selaimissa vain files-listassa (ja tyyppi voi puuttua)
+  return Array.from(cd.files || []).find((x) => /^image\//.test(x.type) || /\.(jpe?g|png|webp|gif|heic|heif|avif)$/i.test(x.name)) || null;
 }
 document.addEventListener('paste', (e) => {
-  if (!hofDraft || !hofOpen || cropping) return;
-  const file = pastedImage(e);
-  if (!file) return;
+  if (!hofOpen || !state || !state.me || !state.me.admin || cropping) return;
+  const cd = e.clipboardData;
+  const file = pastedImage(cd);
   const a = document.activeElement;
-  const inText = a && /INPUT|TEXTAREA/.test(a.tagName) && !['checkbox', 'radio'].includes(a.type);
-  if (inText && e.clipboardData.types.includes('text/plain')) return; // teksti tekstikenttään
-  const row = (a && a.closest && a.closest('.hof-edit-nom')) || document.querySelector('.hof-edit-nom:hover');
+  const inText = !!(a && /INPUT|TEXTAREA/.test(a.tagName) && !['checkbox', 'radio'].includes(a.type));
+  const row = hofDraft ? ((a && a.closest && a.closest('.hof-edit-nom')) || document.querySelector('.hof-edit-nom:hover')) : null;
+  // Vianetsintä palvelimen lokiin (docker logs / konsoli: [kuvalataus]): mitä leikepöydältä tuli
+  uploadLog({ name: file ? file.name : '', type: file ? file.type : '', size: file ? file.size : 0, result: 'liitä', stage: `liitä/${file ? 'kuva' : 'ei kuvaa'}${row ? ' rivillä' : ''}${hofDraft ? '' : ' (lomake kiinni)'}`, error: `tyypit: ${Array.from((cd && cd.types) || []).join(', ') || '-'}` });
+  if (!file) {
+    if (!inText) toast(hofDraft ? 'Leikepöydällä ei ole kuvaa. Kopioi kuva (ei kuvan osoitetta) ja liitä uudelleen.' : 'Avaa ensin gaalan muokkaus ("Muokkaa" tai "+ Lisää aiempi gaala") ja liitä kuva ehdokkaan riville.', true);
+    return; // teksti liitetään tekstikenttään tavalliseen tapaan
+  }
+  if (!row) {
+    if (inText && cd.types.includes('text/plain')) return; // esim. kategorian nimi: teksti normaalisti
+    e.preventDefault();
+    toast(hofDraft ? 'Klikkaa ensin ehdokkaan riviä (esim. "Mistä?"-kenttää) ja liitä kuva sitten.' : 'Avaa ensin gaalan muokkaus ("Muokkaa" tai "+ Lisää aiempi gaala") ja liitä kuva ehdokkaan riville.', true);
+    return;
+  }
   e.preventDefault();
-  if (!row) { toast('Klikkaa ensin ehdokkaan riviä (esim. "Mistä?"-kenttää) ja liitä kuva sitten.', true); return; }
   readIntoMemory(file)
     .then((copy) => uploadPhoto({ target: 'hof', id: row.dataset.dropId }, copy, 'liitä'))
     .catch((err) => { uploadLog({ name: file.name, type: file.type, size: file.size, result: 'virhe', stage: 'liitä/muistiin luku', error: err.detail || err.message }); toast('Kuvaa ei voitu lukea.', true); });
