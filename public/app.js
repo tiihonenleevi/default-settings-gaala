@@ -78,7 +78,7 @@ function render() {
   if (cur) tabs.scrollLeft = cur.offsetLeft - (tabs.clientWidth - cur.offsetWidth) / 2;
 }
 
-// Sivun alaosa: gaalan järjestäjä
+// Sivun alaosa: Gaalan järjestäjä
 function footer() {
   return '<footer class="footer"><span>Default Settings Oy</span></footer>';
 }
@@ -97,7 +97,7 @@ function loginView() {
         <div style="display:grid;gap:24px">
           ${brand()}
           <h1 class="display">Kuka ansaitsee palkinnon tänä vuonna?</h1>
-          <p class="lead">Ensin päätetään kategoriat, sitten ehdokkaat ja lopuksi voittajat. Voittajat paljastetaan gaalassa.</p>
+          <p class="lead">Ensin päätetään kategoriat, sitten ehdokkaat ja lopuksi voittajat. Voittajat paljastetaan Gaalassa.</p>
         </div>
         <form class="panel" id="login-form" autocomplete="off">
           <p class="eyebrow">Kirjaudu sisään</p>
@@ -165,7 +165,7 @@ function hofVisibility() {
 }
 
 // ---------- Hall of Fame ----------
-// Aiemmat gaalat uusin ensin: jokaisesta kategoriasta voittaja isona korttina ja muut ehdokkaat pienempinä.
+// Aiemmat Gaalat uusin ensin: jokaisesta kategoriasta voittaja isona korttina ja muut ehdokkaat pienempinä.
 function hofView() {
   const s = state; const years = s.hallOfFame || []; const admin = s.me.admin && !s.me.tester;
   return `
@@ -173,11 +173,11 @@ function hofView() {
     <header class="hero-head screen-center">
       <p class="eyebrow">Hall of Fame</p>
       <h1 class="h1">Edellisten vuosien voittajat</h1>
-      <p class="lead">${years.length > 1 ? `HerrasmiesKlubi Gaala vuodesta ${years[years.length - 1].year} lähtien.` : 'Täällä elävät aiempien gaalojen voittajat ja ehdokkaat.'}</p>
-      <div><button class="btn btn--secondary btn--sm" data-act="hof-close">Takaisin gaalaan</button></div>
+      <p class="lead">${years.length > 1 ? `HerrasmiesKlubi Gaala vuodesta ${years[years.length - 1].year} lähtien.` : 'Täällä elävät aiempien Gaalojen voittajat ja ehdokkaat.'}</p>
+      <div><button class="btn btn--secondary btn--sm" data-act="hof-close">Takaisin Gaalaan</button></div>
     </header>
     ${admin && s.admin ? hofVisibility() : ''}
-    ${years.length ? hofTabs(years) : `<div class="empty">${admin ? 'Hall of Fame on vielä tyhjä. Lisää viime vuoden gaala alta.' : 'Hall of Fame julkaistaan myöhemmin.'}</div>`}
+    ${years.length ? hofTabs(years) : `<div class="empty">${admin ? 'Hall of Fame on vielä tyhjä. Lisää viime vuoden Gaala alta.' : 'Hall of Fame julkaistaan myöhemmin.'}</div>`}
     ${admin ? hofAdmin() : ''}
   </section>`;
 }
@@ -199,7 +199,7 @@ function hofTabs(years) {
 }
 
 // Osoite seuraa Hall of Famea: #hall-of-fame tai #hall-of-fame/2025. Avaaminen lisää historiaan rivin, jotta
-// selaimen takaisin-nappi palaa gaalaan; vuoden vaihto vain korvaa osoitteen.
+// selaimen takaisin-nappi palaa Gaalaan; vuoden vaihto vain korvaa osoitteen.
 function hofHash() { return hofOpen ? `#hall-of-fame${hofYearSel ? '/' + hofYearSel : ''}` : ''; }
 function syncHofUrl(push) {
   const url = location.pathname + location.search + hofHash();
@@ -318,7 +318,7 @@ function hofForm() {
   return `
   <form class="panel hof-form" data-form="hof" novalidate>
     <div class="hof-form-head">
-      <p class="eyebrow">${d.id ? 'Muokkaa gaalaa' : 'Lisää aiempi gaala'}</p>
+      <p class="eyebrow">${d.id ? 'Muokkaa Gaalaa' : 'Lisää aiempi Gaala'}</p>
       <div class="field hof-year-field"><label for="hof-year">Vuosi</label><input class="input" id="hof-year" data-hof="year" type="number" inputmode="numeric" min="2000" max="2100" value="${esc(d.year)}"></div>
     </div>
     ${hofCoverEdit(d)}
@@ -341,7 +341,7 @@ function hofForm() {
     </fieldset>`).join('')}
     <div><button class="btn btn--secondary btn--sm" type="button" data-act="hof-cat-add">+ Lisää kategoria</button></div>
     <div class="edit-actions hof-form-actions">
-      <button class="btn btn--primary btn--sm" type="submit">Tallenna gaala</button>
+      <button class="btn btn--primary btn--sm" type="submit">Tallenna Gaala</button>
       <button class="btn btn--ghost" type="button" data-act="hof-edit-cancel">Peruuta</button>
       ${d.id ? `<button class="btn btn--ghost" type="button" data-act="hof-del" data-id="${d.id}">Poista vuosi</button>` : ''}
     </div>
@@ -357,11 +357,11 @@ function hofAdmin() {
     <header class="cat-head"><p class="eyebrow">Vain järjestäjille</p><h2 class="h2">Hall of Famen hallinta</h2></header>
     ${s.realPhase === 5 && !archived ? `<div class="panel">
       <p class="eyebrow">Tämän vuoden tulokset</p>
-      <p style="margin:0">Äänestys on suljettu. Lisää vuoden ${thisYear} finalistit ja voittajat Hall of Fameen. Tee tämä ennen kuin nollaat gaalan ensi vuotta varten.</p>
-      <div><button class="btn btn--primary btn--sm" data-act="hof-archive" data-year="${thisYear}">Lisää gaala ${thisYear} Hall of Fameen</button></div>
+      <p style="margin:0">Äänestys on suljettu. Lisää vuoden ${thisYear} finalistit ja voittajat Hall of Fameen. Tee tämä ennen kuin nollaat Gaalan ensi vuotta varten.</p>
+      <div><button class="btn btn--primary btn--sm" data-act="hof-archive" data-year="${thisYear}">Lisää Gaala ${thisYear} Hall of Fameen</button></div>
     </div>` : ''}
     ${hofDraft ? hofForm() : `<div class="item-actions">
-      <button class="btn btn--secondary btn--sm" data-act="hof-edit" data-id="new">+ Lisää aiempi gaala</button>
+      <button class="btn btn--secondary btn--sm" data-act="hof-edit" data-id="new">+ Lisää aiempi Gaala</button>
       ${years.map((y) => `<button class="btn btn--ghost" data-act="hof-edit" data-id="${y.id}">Muokkaa ${y.year}</button>`).join('')}
     </div>`}
   </div>`;
@@ -423,7 +423,7 @@ function photosView() {
       <p class="lead">${admin
         ? `Avaa kortin "Kuvaversiot" nähdäksesi kaikki henkilön kuvat. Klikkaa kuvaa esikatsellaksesi sitä. "Käytä" vaihtaa normaalin profiilikuvan ja "Käytä &lt;18" valitsee kuvan, joka näytetään Alle K18 -tilassa.${s.admin && s.admin.safeMode ? ' Alle K18 -tila on nyt päällä, joten korteissa näkyvät &lt;18-kuvat.' : ''}`
         : 'Lähetä kuva, joka sopisi kaverin ehdokaskorttiin. Järjestäjät valitsevat, mitä kuvia käytetään.'}</p>
-      <div><button class="btn btn--secondary btn--sm" data-act="photos-close">Takaisin gaalaan</button></div>
+      <div><button class="btn btn--secondary btn--sm" data-act="photos-close">Takaisin Gaalaan</button></div>
     </header>
     ${people.length ? `<div class="nom-grid sugg-grid">
       ${people.map((p) => {
@@ -537,14 +537,14 @@ function phaseHero() {
     return `<div class="hero-head">
       <p class="eyebrow">Vaihe 1 / 4 · Kategoriaehdotukset</p>
       <h1 class="h1">Mistä palkintoja jaetaan?</h1>
-      <p class="lead">Ehdota kategorioita, joista gaalassa voisi jakaa palkinnon. Voit ehdottaa enintään ${L.maxCategoryProposals} kategoriaa. Ehdotukset eivät ole ääniä: seuraavassa vaiheessa kaikki äänestävät, mitkä kategoriat pääsevät gaalaan.</p>
+      <p class="lead">Ehdota kategorioita, joista Gaalassa voisi jakaa palkinnon. Voit ehdottaa enintään ${L.maxCategoryProposals} kategoriaa. Ehdotukset eivät ole ääniä: seuraavassa vaiheessa kaikki äänestävät, mitkä kategoriat pääsevät Gaalaan.</p>
     </div>
     <div class="meta-row"><span class="meter">${pips(s.used.catProposals, L.maxCategoryProposals)} Ehdotuksia käytetty ${s.used.catProposals} / ${L.maxCategoryProposals}</span>${deadline()}</div>`;
   }
   if (s.phase === 2) {
     return `<div class="hero-head">
       <p class="eyebrow">Vaihe 2 / 4 · Kategoria-äänestys</p>
-      <h1 class="h1">Mitkä kategoriat gaalaan?</h1>
+      <h1 class="h1">Mitkä kategoriat Gaalaan?</h1>
       <p class="lead">Gaalassa jaetaan ${L.targetCategories} palkintoa. ”Vuoden sykähdyttävin hetki” on mukana joka tapauksessa, ja loput ${L.advanceCount} valitaan äänestämällä. Sinulla on ${L.catVotes} ääntä, enintään yksi per kategoria.</p>
       <p class="notice"><b>Äänestä vähintään yhtä kategoriaa</b> ennen kuin lukitset vastauksesi.</p>
     </div>
@@ -571,7 +571,7 @@ function phaseHero() {
   return `<div class="hero-head screen-center">
     <p class="eyebrow">Äänestys päättyi</p>
     <h1 class="display">Äänestys on suljettu</h1>
-    <p class="lead">Kiitos äänistä! Voittajat julkistetaan gaalassa.</p>
+    <p class="lead">Kiitos äänistä! Voittajat julkistetaan Gaalassa.</p>
   </div>`;
 }
 
@@ -734,7 +734,7 @@ function waitingView() {
       <p class="eyebrow">Lukko sisään · vaihe ${s.phase} / 4</p>
       <h1 class="h1">${last ? 'Äänesi on lukittu' : 'Seuraava vaihe ei ole vielä alkanut'}</h1>
       ${when}
-      <p class="muted" style="margin:0;max-width:52ch">${last ? 'Kiitos äänistä! Voittajat julkistetaan gaalassa.' : 'Olet jo vastannut tähän vaiheeseen. Odota, että järjestäjät avaavat seuraavan vaiheen – sivu päivittyy itsestään.'}</p>
+      <p class="muted" style="margin:0;max-width:52ch">${last ? 'Kiitos äänistä! Voittajat julkistetaan Gaalassa.' : 'Olet jo vastannut tähän vaiheeseen. Odota, että järjestäjät avaavat seuraavan vaiheen – sivu päivittyy itsestään.'}</p>
       <dl class="lock-summary">${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
       <p class="small muted" style="margin:0">Haluatko muuttaa jotain? Pyydä järjestäjää avaamaan lukko.</p>
     </div>
@@ -773,7 +773,7 @@ function phaseProposals() {
   </section>`;
 }
 
-// Vaihe 2: äänestys gaalaan pääsevistä kategorioista
+// Vaihe 2: äänestys Gaalaan pääsevistä kategorioista
 function phaseCategoryVote() {
   const s = state; const L = s.limits;
   const cats = [...s.categories].sort((a, b) => (b.fixed - a.fixed) || a.name.localeCompare(b.name, 'fi'));
@@ -952,7 +952,7 @@ function adminView() {
       <div class="admin-grid">
         ${[['Ehdotukset', 1], ['Kategoria-äänestys', 2], ['Ehdokkaat', 3], ['Finaali', 4]].map(([n, p]) => `<div class="field"><label for="s-end${p}">Vaihe ${p} (${n}) päättyy</label><input class="input" id="s-end${p}" type="datetime-local" value="${esc((s.phaseEnds || {})[p] || '')}"></div>`).join('')}
         <div class="field"><label for="s-next">Seuraava vaihe alkaa (näkyy odotusnäytöllä)</label><input class="input" id="s-next" value="${esc(s.nextStart)}" placeholder="la 5.12. klo 18"><span class="small muted">Tyhjenee, kun vaihe vaihtuu</span></div>
-        <div class="field"><label for="s-tc">Kategorioita gaalassa (sis. kiinteän)</label><input class="input" id="s-tc" type="number" min="2" max="50" value="${L.targetCategories}"><span class="small muted">→ äänestyksellä valitaan ${L.advanceCount}</span></div>
+        <div class="field"><label for="s-tc">Kategorioita Gaalassa (sis. kiinteän)</label><input class="input" id="s-tc" type="number" min="2" max="50" value="${L.targetCategories}"><span class="small muted">→ äänestyksellä valitaan ${L.advanceCount}</span></div>
         <div class="field"><label for="s-cv">Ääniä / hlö kategoria-äänestyksessä</label><input class="input" id="s-cv" type="number" min="1" max="50" value="${L.catVotes}"></div>
         <div class="field"><label for="s-v2">Ääniä / kategoria ehdokasvaiheessa</label><input class="input" id="s-v2" type="number" min="1" max="50" value="${L.votesP2}"></div>
         <div class="field"><label for="s-mc">Kategoriaehdotuksia / hlö</label><input class="input" id="s-mc" type="number" min="1" max="50" value="${L.maxCategoryProposals}"></div>
@@ -1012,10 +1012,10 @@ function adminView() {
 
     <div class="panel danger-panel">
       <p class="eyebrow">Vaaravyöhyke</p>
-      <h3 class="h3">Nollaa gaala</h3>
+      <h3 class="h3">Nollaa Gaala</h3>
       <p class="small muted" style="margin:0">Poistaa kaikki kategoriaehdotukset, ehdokkaat, äänet, lukitukset ja palautteet ja palauttaa vaiheen 1. Osallistujat, koodit, kuvat ja asetukset säilyvät, ellei alla toisin valita. Palvelin tallentaa nykyisen tilanteen varmuuskopioksi ennen nollausta.</p>
       <label class="check small"><input type="checkbox" id="reset-users"> Poista myös osallistujat (koodit lakkaavat toimimasta)</label>
-      <div><button class="btn btn--danger btn--sm" type="button" data-act="reset-gala">Nollaa gaala</button></div>
+      <div><button class="btn btn--danger btn--sm" type="button" data-act="reset-gala">Nollaa Gaala</button></div>
     </div>
   </section>`;
 }
@@ -1074,7 +1074,7 @@ function feedbackView(waiting = false) {
       <p class="eyebrow">Anonyymi palaute</p>
       <h2 class="h2">${waiting ? 'Mitä mieltä olet tähän asti?' : 'Mitä mieltä olit?'}</h2>
       <p class="small muted" style="margin:0">Palaute näkyy muille nimettömänä.</p>
-      <div class="field"><label for="fb-text" class="sr-only">Palaute</label><textarea class="input" id="fb-text" data-keep rows="4" maxlength="1000" placeholder="${waiting ? 'Kerro tästä vaiheesta, ehdotuksista tai mistä vain…' : 'Kerro gaalasta, äänestyksestä tai mistä vain…'}"></textarea></div>
+      <div class="field"><label for="fb-text" class="sr-only">Palaute</label><textarea class="input" id="fb-text" data-keep rows="4" maxlength="1000" placeholder="${waiting ? 'Kerro tästä vaiheesta, ehdotuksista tai mistä vain…' : 'Kerro Gaalasta, äänestyksestä tai mistä vain…'}"></textarea></div>
       <div><button class="btn btn--primary btn--sm" type="submit">Lähetä palaute</button></div>
     </form>
     <div class="feedback-list">
@@ -1090,7 +1090,7 @@ function feedbackView(waiting = false) {
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleString('fi-FI', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
 
 // Hallinnan palauteloki: kirjoittaja näkyy vain täällä. Eritelty vaiheittain: vaiheiden 1–4 odotustilat ja suljettu vaihe.
-const FEEDBACK_GROUPS = { 1: 'Odotustila · vaihe 1 Kategoriaehdotukset', 2: 'Odotustila · vaihe 2 Kategoria-äänestys', 3: 'Odotustila · vaihe 3 Ehdokkaat', 4: 'Odotustila · vaihe 4 Finaali', 5: 'Suljettu · gaalan jälkeen' };
+const FEEDBACK_GROUPS = { 1: 'Odotustila · vaihe 1 Kategoriaehdotukset', 2: 'Odotustila · vaihe 2 Kategoria-äänestys', 3: 'Odotustila · vaihe 3 Ehdokkaat', 4: 'Odotustila · vaihe 4 Finaali', 5: 'Suljettu · Gaalan jälkeen' };
 function feedbackLogView() {
   const log = state.admin.feedbackLog || [];
   const groups = [1, 2, 3, 4, 5].map((ph) => [ph, log.filter((f) => (f.phase || 5) === ph).reverse()]).filter(([, l]) => l.length);
@@ -1110,7 +1110,7 @@ function feedbackLogView() {
             <td class="act"><button class="btn btn--ghost" data-act="fb-del" data-id="${f.id}">Poista</button></td>
           </tr>`).join('')}</tbody>
       </table></div>
-    </div>`).join('') : '<div class="empty">Ei vielä palautetta. Palautetta voi antaa jokaisen vaiheen odotustilassa ja gaalan jälkeen.</div>'}
+    </div>`).join('') : '<div class="empty">Ei vielä palautetta. Palautetta voi antaa jokaisen vaiheen odotustilassa ja Gaalan jälkeen.</div>'}
   </div>`;
 }
 
@@ -1126,7 +1126,7 @@ function statsView() {
   // Jokainen osio: otsikko ja rivit [aika, pääteksti, lisätieto]; rivit aikajärjestyksessä
   const byTime = (a, b) => String(a.at || '').localeCompare(String(b.at || ''));
   const sections = [
-    ['Vaihe 1 · Kategoriaehdotukset', [...st.categories].sort(byTime).map((c) => [c.at, c.name, [c.description, c.editedAt ? `muokattu ${fmtWhen(c.editedAt)}` : '', c.advanced ? 'pääsi gaalaan' : ''].filter(Boolean).join(' · ')])],
+    ['Vaihe 1 · Kategoriaehdotukset', [...st.categories].sort(byTime).map((c) => [c.at, c.name, [c.description, c.editedAt ? `muokattu ${fmtWhen(c.editedAt)}` : '', c.advanced ? 'pääsi Gaalaan' : ''].filter(Boolean).join(' · ')])],
     ['Vaihe 2 · Kategoria-äänet', [...st.catVotes].sort(byTime).map((v) => [v.at, v.name, ''])],
     ['Vaihe 3 · Ehdokasehdotukset', [...st.nominees].sort(byTime).map((n) => [n.at, `${n.name} – ${n.reason}`, [n.category, n.editedAt ? `muokattu ${fmtWhen(n.editedAt)}` : '', n.finalist ? 'finalisti' : ''].filter(Boolean).join(' · ')])],
     ['Vaihe 3 · Ehdokasäänet', [...st.nomVotes].sort(byTime).map((v) => [v.at, `${v.name} – ${v.reason}`, v.category])],
@@ -1168,7 +1168,7 @@ function openCrop(target, id) {
     render();
     return;
   }
-  if (target === 'hof') { // Hall of Fame -lomakkeen rivi: rajaus menee luonnokseen ja tallentuu gaalan mukana
+  if (target === 'hof') { // Hall of Fame -lomakkeen rivi: rajaus menee luonnokseen ja tallentuu Gaalan mukana
     const n = hofRow(id);
     if (!n || !n.src) return;
     const person = hofPeople().find((p) => p.id === n.personId);
@@ -1289,7 +1289,7 @@ function resultsView() {
   return `
   <div style="display:grid;gap:12px">
     <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
-      <p class="eyebrow">Tulokset · gaalan esitystä varten</p>
+      <p class="eyebrow">Tulokset · Gaalan esitystä varten</p>
       <button class="btn btn--secondary btn--sm" data-act="copy-results">Kopioi tulokset tekstinä</button>
     </div>
     ${results().map(({ cat, noms, winners }) => `
@@ -1463,7 +1463,7 @@ document.addEventListener('click', async (e) => {
       hofDraft.categories[t.dataset.ci].nominees.splice(t.dataset.ni, 1); hofDraft.dirty = true; render(); break;
     case 'hof-del': {
       const y = (state.hallOfFame || []).find((x) => x.id === id);
-      if (!y || !confirm(`Poistetaanko gaala ${y.year} Hall of Famesta? Tätä ei voi perua.`)) break;
+      if (!y || !confirm(`Poistetaanko Gaala ${y.year} Hall of Famesta? Tätä ei voi perua.`)) break;
       try { await api('DELETE', `/api/admin/hof/${id}`, {}); hofDraft = null; if (hofYearSel === y.year) hofYearSel = null; syncHofUrl(false); render(); } catch {}
       break;
     }
@@ -1528,13 +1528,13 @@ document.addEventListener('click', async (e) => {
     case 'crop-save': {
       const c = cropping;
       if (c.target === 'hofcover') {
-        if (hofDraft && hofDraft.cover) { hofDraft.cover.crop = { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 100) / 100 }; hofDraft.dirty = true; toast('Rajaus asetettu. Muista tallentaa gaala.'); }
+        if (hofDraft && hofDraft.cover) { hofDraft.cover.crop = { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 100) / 100 }; hofDraft.dirty = true; toast('Rajaus asetettu. Muista tallentaa Gaala.'); }
         cropping = null; render();
         break;
       }
       if (c.target === 'hof') {
         const n = hofRow(c.id);
-        if (n) { n.crop = { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 100) / 100 }; hofDraft.dirty = true; toast('Rajaus asetettu. Muista tallentaa gaala.'); }
+        if (n) { n.crop = { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 100) / 100 }; hofDraft.dirty = true; toast('Rajaus asetettu. Muista tallentaa Gaala.'); }
         cropping = null; render();
         break;
       }
@@ -1545,7 +1545,7 @@ document.addEventListener('click', async (e) => {
     case 'reset-gala': {
       const users = !!document.getElementById('reset-users')?.checked;
       const what = users ? 'KAIKKI: ehdotukset, äänet, palautteet JA osallistujat koodeineen' : 'kaikki ehdotukset, ehdokkaat, äänet, lukitukset ja palautteet';
-      const typed = prompt(`Tämä poistaa ${what}, ja gaala alkaa alusta vaiheesta 1.\n\nKirjoita NOLLAA vahvistaaksesi:`);
+      const typed = prompt(`Tämä poistaa ${what}, ja Gaala alkaa alusta vaiheesta 1.\n\nKirjoita NOLLAA vahvistaaksesi:`);
       if (typed === null) break;
       if (typed.trim() !== 'NOLLAA') { toast('Nollausta ei tehty: vahvistussana ei täsmännyt.', true); break; }
       editing = null; proposing = null; cropping = null; stats = null;
@@ -1687,13 +1687,13 @@ async function uploadPhoto(tgt, file, via) {
     const image = await imageToDataUrl(file, 1400, (d) => { meta.dims = d; }, (k) => { meta.kind = k; },
       (step) => { if (step !== 'aloitettu') uploadLog({ ...meta, result: 'vaihe', stage: `${via}/${step}` }); });
     stage = 'lähetys';
-    if (tgt.target === 'hofcover') { // Hall of Famen kansikuva: luonnokseen, tallentuu "Tallenna gaala" -napista
+    if (tgt.target === 'hofcover') { // Hall of Famen kansikuva: luonnokseen, tallentuu "Tallenna Gaala" -napista
       const r = await api('POST', '/api/admin/hof/image', { image });
       if (hofDraft) { hofDraft.cover = { image: r.image, src: r.src, crop: null }; hofDraft.dirty = true; openCrop('hofcover', 'cover'); }
       uploadLog({ ...meta, result: 'onnistui', stage: `${via}/hofcover` });
       return;
     }
-    if (tgt.target === 'hof') { // Hall of Famen oma kuva: liitetään lomakkeen riviin, tallentuu "Tallenna gaala" -napista
+    if (tgt.target === 'hof') { // Hall of Famen oma kuva: liitetään lomakkeen riviin, tallentuu "Tallenna Gaala" -napista
       const r = await api('POST', '/api/admin/hof/image', { image });
       const n = hofRow(tgt.id);
       if (n) { n.image = r.image; n.src = r.src; n.crop = null; hofDraft.dirty = true; openCrop('hof', tgt.id); } // heti rajaukseen, kuten profiilikuvissa
@@ -1788,7 +1788,7 @@ document.addEventListener('paste', (e) => {
   if (!hofDraft) {
     if (inText || (!file && !url)) return;
     e.preventDefault();
-    toast('Avaa ensin gaalan muokkaus ("Muokkaa" tai "+ Lisää aiempi gaala") ja liitä kuva ehdokkaan riville.', true);
+    toast('Avaa ensin Gaalan muokkaus ("Muokkaa" tai "+ Lisää aiempi Gaala") ja liitä kuva ehdokkaan riville.', true);
     return;
   }
   if (!row) {
