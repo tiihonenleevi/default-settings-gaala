@@ -314,7 +314,7 @@ function stateFor(user, opts = {}) {
     nextStart: s.nextStart || '',
     phaseEnds: s.phaseEnds || {},
     limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, votesP2: s.votesP2, finalists: s.finalists, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
-    me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, tester: !!user.tester, locked: user.tester ? false : isLocked(user), photo: displayPhoto(user) } : null,
+    me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, tester: !!user.tester, locked: user.tester ? false : isLocked(user), unlockRequested: unlockRequested(user), photo: displayPhoto(user) } : null,
   };
   if (!user) return base;
   const uid = user.id;
@@ -400,7 +400,7 @@ function adminView() {
       p2: db.catVotes.filter((v) => v.userId === u.id).length,
       p3: db.nomVotes.filter((v) => v.userId === u.id).length,
       p4: Object.keys(db.finalVotes[u.id] || {}).length,
-      locked: isLocked(u),
+      locked: isLocked(u), unlockRequested: unlockRequested(u),
     })).sort((a, b) => a.name.localeCompare(b.name, 'fi')),
     categories: db.categories.map((c) => ({ id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, votes: catCounts[c.id] || 0, byName: userName(c.by) })),
     nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), ownPhoto: !!n.photo, finalist: !!n.finalist, votes: nomCounts[n.id] || 0, finalVotes: fin[n.id] || 0, byName: userName(n.by),
@@ -651,9 +651,29 @@ route('POST', '/api/lock', ({ user }) => {
   const ready = lockReady(user);
   if (!ready.ok) fail(400, ready.reason);
   user.locked = { ...(user.locked || {}), [db.settings.phase]: now() };
+  if (user.unlockRequest) delete user.unlockRequest[db.settings.phase]; // vanha pyyntö ei koske uutta lukitusta
   writeDb();
   notifyLock(user);
   return { ...stateFor(user), notice: 'Lukko sisään! Vastauksesi tähän vaiheeseen on tallennettu.' };
+});
+
+// Lukon avauspyyntö odotusnäytöltä: tallennetaan käyttäjälle (näkyy hallinnan osallistujalistassa) ja
+// ilmoitetaan adminien Discord-kanavalle. Uusi Discord-ilmoitus samasta vaiheesta aikaisintaan 30 min päästä.
+function unlockRequested(user) {
+  return !!(user && !user.tester && isLocked(user) && user.unlockRequest && user.unlockRequest[db.settings.phase]);
+}
+route('POST', '/api/unlock-request', ({ user }) => {
+  requireVoter(user);
+  const ph = db.settings.phase;
+  if (ph > 4) fail(409, 'Äänestys on jo suljettu.');
+  if (!isLocked(user)) fail(409, 'Vastauksesi eivät ole lukossa.');
+  const prev = user.unlockRequest && user.unlockRequest[ph];
+  user.unlockRequest = { ...(user.unlockRequest || {}), [ph]: now() };
+  writeDb();
+  if (!prev || Date.now() - Date.parse(prev) > 30 * 60 * 1000) {
+    notify('requests', `🙋 **Lukon avauspyyntö:** ${user.name} haluaa avata vaiheen ${ph} (${PHASES[ph]}) lukon. Avaa hallinnasta: Osallistujat → Avaa lukko.`);
+  }
+  return stateFor(user);
 });
 
 // Palaute suljetussa vaiheessa ja jokaisen vaiheen odotustilassa (kun omat vastaukset on lukittu).
@@ -772,7 +792,7 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
   db.catVotes = []; db.nominees = []; db.nomVotes = [];
   db.finalVotes = {}; db.finalVoteAt = {}; db.feedback = [];
   db.settings.phase = 1; db.settings.deadline = ''; db.settings.nextStart = ''; db.settings.phaseEnds = {};
-  for (const u of Object.values(db.users)) u.locked = {};
+  for (const u of Object.values(db.users)) { u.locked = {}; u.unlockRequest = {}; }
   if (body.users) for (const u of Object.values(db.users)) if (!u.root) delete db.users[u.id];
   db.photoSuggestions = (db.photoSuggestions || []).filter((x) => db.users[x.personId]);
   writeDb();
@@ -908,6 +928,7 @@ route('POST', '/api/admin/users/:id', ({ user, params, body }) => {
   if (body.regenerate) { u.code = newCode(); u.token = newToken(); u.lastLogin = null; }
   if (body.unlock && u.locked && u.locked[db.settings.phase]) {
     delete u.locked[db.settings.phase];
+    if (u.unlockRequest) delete u.unlockRequest[db.settings.phase];
     notify('locks', `🔓 ${user.name} avasi lukon: ${u.name} (vaihe ${db.settings.phase}).`);
   }
   if ('nominable' in body) u.nominable = !!body.nominable;
@@ -1198,7 +1219,7 @@ function requirePhase(p) {
 // Palvelin lähettää tapahtumista viestin Discord-kanavalle webhookin kautta (pelkkä HTTPS-pyyntö, ei bottia).
 // Osoite asetetaan hallinnasta (tallentuu tietokantaan) tai ympäristömuuttujalla DISCORD_WEBHOOK. Jos osoitetta
 // ei ole, ilmoitukset ovat pois päältä eikä mikään muu muutu. Discordin katko ei koskaan kaada gaalaa.
-const NOTIFY_KINDS = { errors: 'Virheet (kuvalataukset, palvelinvirheet)', locks: 'Lukitukset', phases: 'Vaiheen vaihtuminen', feedback: 'Palautteet', photos: 'Kuvaehdotukset', reminders: 'Muistutukset lukitsemattomista' };
+const NOTIFY_KINDS = { errors: 'Virheet (kuvalataukset, palvelinvirheet)', requests: 'Lukon avauspyynnöt', locks: 'Lukitukset', phases: 'Vaiheen vaihtuminen', feedback: 'Palautteet', photos: 'Kuvaehdotukset', reminders: 'Muistutukset lukitsemattomista' };
 const NOTIFY_TZ = process.env.GAALA_TZ || 'Europe/Helsinki'; // vaiheiden päättymisajat ja muistutukset tämän ajan mukaan
 const WEBHOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/;
 

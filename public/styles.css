@@ -969,3 +969,10 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 .notify-kinds legend { padding: 0; margin-bottom: 8px; }
 .notify-on { color: #8fd18f; font-weight: 500; }
 .notify-off { color: var(--ink-muted); font-weight: 500; }
+/* Lukon avauspyyntö odotusnäytöllä */
+.unlock-ask { display: grid; justify-items: center; gap: 10px; }
+.unlock-sent { display: grid; gap: 6px; max-width: 52ch; padding: 14px 18px; border: 1px solid rgba(210, 175, 87, 0.45); border-radius: var(--radius-md); background: rgba(210, 175, 87, 0.07); text-align: center; }
+.unlock-sent p { margin: 0; font-size: 14px; line-height: 1.5; }
+.unlock-sent p[lang="en"] { color: var(--ink-muted); font-size: 13px; }
+.unlock-req-tag { margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--gold); color: var(--on-gold); font-size: 10px; letter-spacing: 0.1em; }
+.unlock-req-line b { color: var(--gold-light); font-weight: 500; }

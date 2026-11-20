@@ -375,7 +375,7 @@ function suggestButton() {
 
 // Discord-ilmoitukset: palvelin lähettää tapahtumat adminien Discord-kanavalle webhookin kautta.
 // Webhook-osoite on salaisuus: se tallennetaan palvelimelle eikä sitä koskaan näytetä takaisin selaimessa.
-const NOTIFY_LABELS = { errors: 'Virheet (kuvalataukset, palvelinvirheet)', locks: 'Lukitukset ja "kaikki lukinneet"', phases: 'Vaiheen vaihtuminen', feedback: 'Palautteet (kirjoittajan nimellä)', photos: 'Kuvaehdotukset', reminders: 'Muistutukset lukitsemattomista' };
+const NOTIFY_LABELS = { errors: 'Virheet (kuvalataukset, palvelinvirheet)', requests: 'Lukon avauspyynnöt', locks: 'Lukitukset ja "kaikki lukinneet"', phases: 'Vaiheen vaihtuminen', feedback: 'Palautteet (kirjoittajan nimellä)', photos: 'Kuvaehdotukset', reminders: 'Muistutukset lukitsemattomista' };
 function notifyPanel() {
   const n = state.admin.notify || { set: false, kinds: {}, reminderTime: '18:00' };
   return `
@@ -762,7 +762,12 @@ function waitingView() {
       ${when}
       <p class="muted" style="margin:0;max-width:52ch">${last ? 'Kiitos äänistä! Voittajat julkistetaan Gaalassa.' : 'Olet jo vastannut tähän vaiheeseen. Odota, että järjestäjät avaavat seuraavan vaiheen – sivu päivittyy itsestään.'}</p>
       <dl class="lock-summary">${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
-      <p class="small muted" style="margin:0">Haluatko muuttaa jotain? Pyydä järjestäjää avaamaan lukko.</p>
+      ${s.me.unlockRequested
+        ? `<div class="unlock-sent" role="status">
+            <p>Tukipyyntönne on välitetty järjestelmänvalvojalle. Olkaa hyvä ja tarkistakaa tilanne myöhemmin uudelleen.</p>
+            <p lang="en">Your support request has been forwarded to an administrator. Please check again later.</p>
+          </div>`
+        : `<div class="unlock-ask"><p class="small muted" style="margin:0">Haluatko muuttaa jotain?</p><button class="btn btn--secondary btn--sm" data-act="unlock-request">Pyydä lukon avausta</button></div>`}
     </div>
   </section>
   ${feedbackView(true)}`;
@@ -967,6 +972,7 @@ function adminView() {
         <p style="margin:0" class="h3">${a.participants.length} koodia · ${a.participants.filter((p) => p.joined).length} kirjautunut</p>
         <p class="small muted" style="margin:0">Osallistuneita: ehdotukset – ${a.voters.p1}, kategoria-äänestys – ${a.voters.p2}, ehdokkaat – ${a.voters.p3}, finaali – ${a.voters.p4}</p>
         ${s.phase <= 4 ? `<p class="small" style="margin:0">Lukinneet tässä vaiheessa: <b style="color:var(--gold-light);font-weight:500">${a.locked} / ${a.participants.filter((p) => !p.tester).length}</b></p>` : ''}
+        ${s.phase <= 4 && a.participants.some((p) => p.unlockRequested) ? `<p class="small unlock-req-line" style="margin:0">Lukon avausta pyytää: <b>${a.participants.filter((p) => p.unlockRequested).map((p) => esc(p.name)).join(', ')}</b> <span class="muted">(Osallistujat → Avaa lukko)</span></p>` : ''}
       </div>
       ${k18Panel()}
     </div>
@@ -1083,7 +1089,7 @@ function participantsView() {
             <button class="btn btn--ghost" data-act="copy-link" data-code="${esc(p.code)}" data-name="${esc(p.name)}">Kopioi linkki</button>
             <button class="btn btn--ghost" data-act="user-regen" data-id="${p.id}">Uusi koodi</button>
             <button class="btn btn--ghost" data-act="user-del" data-id="${p.id}">Poista</button>
-            ${p.locked && ph <= 4 ? `<button class="btn btn--ghost act-unlock" data-act="user-unlock" data-id="${p.id}" data-name="${esc(p.name)}">Avaa lukko</button>` : ''}
+            ${p.locked && ph <= 4 ? `<button class="btn btn--ghost act-unlock" data-act="user-unlock" data-id="${p.id}" data-name="${esc(p.name)}">Avaa lukko${p.unlockRequested ? ' <span class="unlock-req-tag">pyytää</span>' : ''}</button>` : ''}
           </div></td>
         </tr>`).join('')}</tbody>
     </table></div>
@@ -1395,7 +1401,7 @@ document.addEventListener('click', async (e) => {
       await refresh(); state.me.locked = true; render(); window.scrollTo(0, 0);
       break;
     case 'test-reset': editing = null; proposing = null; await refresh(); toast('Testi aloitettu alusta.'); break;
-    case 'test-unlock': simulate('unlock'); break;
+    case 'test-unlock': state.me.unlockRequested = false; simulate('unlock'); break;
     case 'copy-link': {
       const link = `${location.origin}/?k=${t.dataset.code}`;
       try { await navigator.clipboard.writeText(link); toast(`${t.dataset.name}: linkki kopioitu.`); }
@@ -1507,6 +1513,11 @@ document.addEventListener('click', async (e) => {
       } catch {}
       break;
     }
+    case 'unlock-request':
+      // Testikäyttäjällä vain paikallisesti; muuten pyyntö palvelimelle, joka ilmoittaa adminien Discord-kanavalle
+      if (isTest()) { state.me.unlockRequested = true; render(); break; }
+      await api('POST', '/api/unlock-request', {}).catch(() => {});
+      break;
     case 'notify-test':
       await api('POST', '/api/admin/notify-test', {}).catch(() => {});
       break;

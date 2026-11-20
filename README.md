@@ -49,6 +49,7 @@ Osoite on salaisuus: se tallennetaan palvelimelle (`data/db.json`) eikä sitä n
 
 Ilmoitukset (kunkin tyypin voi kytkeä pois hallinnasta):
 - **Virheet:** epäonnistuneet kuvalataukset (käyttäjä, tiedosto, virhe, selain) ja palvelinvirheet
+- **Lukon avauspyynnöt:** osallistuja painaa odotusnäytöllä **Pyydä lukon avausta** → ilmoitus kertoo kuka ja mistä vaiheesta. Pyyntö näkyy myös hallinnassa ("Lukon avausta pyytää" ja merkki Avaa lukko -napissa) ja poistuu, kun lukko avataan.
 - **Lukitukset:** kuka lukitsi ja montako on lukinnut, ilmoitus kun kaikki ovat lukinneet, adminin avaamat lukot
 - **Vaiheen vaihtuminen**, **palautteet** (kirjoittajan nimellä) ja **kuvaehdotukset**
 - **Muistutukset** vaiheissa 1–4: lukitsemattomien lista kerran päivässä valittuun aikaan (oletus 18:00), 24 h ja 2 h ennen vaiheen päättymistä sekä päättymisajan mentyä. Ajat ovat Suomen aikaa (`GAALA_TZ`, oletus `Europe/Helsinki`).
