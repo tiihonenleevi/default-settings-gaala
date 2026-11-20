@@ -409,6 +409,7 @@ function adminView() {
     hofPublished: !!db.settings.hofPublished,
     // Discord-ilmoitukset: osoitetta ei koskaan lähetetä selaimeen, vain tieto siitä, onko se asetettu
     notify: { set: !!webhookUrl(), fromEnv: !db.settings.discordWebhook && !!process.env.DISCORD_WEBHOOK, kinds: Object.fromEntries(Object.keys(NOTIFY_KINDS).map((k) => [k, notifyOn(k)])), reminderTime: reminderTime() },
+    bulletin: { set: !!db.settings.publicWebhook, roleId: db.settings.publicRoleId || '', time: bulletinTime(), lastSent: db.settings.bulletinLastSent || '' },
     nomVoteNeed: nomVoteNeed(null).reduce((sum, x) => sum + x.need, 0),
     voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nomVotes.map((v) => v.userId)).size, p4: Object.keys(db.finalVotes).length },
     locked: Object.values(db.users).filter((u) => !u.root && !u.tester && isLocked(u)).length,
@@ -1242,11 +1243,12 @@ function notify(kind, text) {
   if (notifyQueue.length > 40) notifyQueue.splice(0, notifyQueue.length - 40);
   pumpNotify();
 }
-async function postDiscord(content, url = webhookUrl()) {
+async function postDiscord(content, url = webhookUrl(), extra = {}) {
   return fetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    // allowed_mentions: käyttäjien teksti (esim. "@everyone" palautteessa) ei koskaan pingaa ketään
-    body: JSON.stringify({ content, username: 'HerrasmiesKlubi Gaala', allowed_mentions: { parse: [] } }),
+    // allowed_mentions: käyttäjien teksti (esim. "@everyone" palautteessa) ei koskaan pingaa ketään;
+    // julkinen tiedote saa pingata vain erikseen asetetun roolin (extra.allowed_mentions)
+    body: JSON.stringify({ content, username: 'HerrasmiesKlubi Gaala', allowed_mentions: { parse: [] }, ...extra }),
     signal: AbortSignal.timeout(10000),
   });
 }
@@ -1342,9 +1344,130 @@ function reminderTick() {
   if (dirty) writeDb();
   for (const m of msgs) notify('reminders', m);
 }
-const safeTick = () => { try { reminderTick(); } catch (e) { console.error('[discord] muistutus epäonnistui', e); } };
+const safeTick = () => {
+  try { reminderTick(); } catch (e) { console.error('[discord] muistutus epäonnistui', e); }
+  try { bulletinTick(); } catch (e) { console.error('[discord] tiedote epäonnistui', e); }
+};
 setTimeout(safeTick, 10 * 1000).unref(); // heti käynnistyksen jälkeen (esim. päivityksen jälkeen kesken päivän)
 setInterval(safeTick, 60 * 1000).unref();
+
+// ---------- Julkinen päivittäinen tiedote ----------
+// Toinen webhook gaalaosallistujien kanavalle: kerran päivässä virallinen kaksikielinen tiedote siitä, montako on
+// lyönyt vaiheen lukkoon ja paljonko aikaa vaiheen loppuun on. Rooli (esim. @Gaala-jäsenet) pingataan vain, jos
+// sen ID on asetettu. Mukana ei ole nimiä: lukitsemattomien nimet menevät vain adminien kanavalle.
+function bulletinTime() { return db.settings.bulletinTime ?? '12:00'; }
+const PHASE_EN = { 1: 'Category Suggestions', 2: 'Category Voting', 3: 'Nominees', 4: 'Final' };
+const PHASE_IN_FI = { 1: 'kategorioiden ehdotusvaiheessa', 2: 'kategorioiden äänestysvaiheessa', 3: 'ehdokasvaiheessa', 4: 'finaalivaiheessa' };
+const PHASE_NOM_FI = { 1: 'kategorioiden ehdotusvaihe', 2: 'kategorioiden äänestysvaihe', 3: 'ehdokasvaihe', 4: 'finaalivaihe' };
+const PHASE_WHAT = { // mitä lyödään lukkoon: [suomeksi, englanniksi]
+  1: ['kategoriaehdotuksensa', 'category suggestions'], 2: ['kategoriaäänensä', 'category votes'],
+  3: ['ehdokasäänensä', 'nominee votes'], 4: ['finaaliäänensä', 'final votes'],
+};
+const WD_FI = ['sunnuntaina', 'maanantaina', 'tiistaina', 'keskiviikkona', 'torstaina', 'perjantaina', 'lauantaina'];
+const WD_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// Vaiheen päättymisen kuvaus molemmilla kielillä: tänään / huomenna / N päivän päästä (kalenteripäivinä Suomen aikaa)
+function bulletinWhen(end) {
+  if (!end) return { fi: 'Vaiheen päättymisajankohdasta tiedotetaan erikseen.', en: 'The closing time of the phase will be announced separately.' };
+  const [d, t] = end.split('T'); const [y, m, dd] = d.split('-').map(Number);
+  const wd = new Date(Date.UTC(y, m - 1, dd)).getUTCDay();
+  const dateTxt = `${dd}.${m}.${y}`; const timeTxt = t.replace(':', '.');
+  const today = tzNow().date;
+  const days = Math.round((Date.UTC(y, m - 1, dd) - Date.parse(`${today}T00:00:00Z`)) / 86400000);
+  const left = wallToMs(end) - Date.now();
+  if (left <= 0) return { fi: `Vaiheen päättymisaika (${dateTxt} klo ${timeTxt}) on umpeutunut, ja hallitus avaa seuraavan vaiheen piakkoin.`, en: `The closing time of the phase (${dateTxt} at ${timeTxt}) has passed, and the Administration will open the next phase shortly.` };
+  if (days <= 0) {
+    const h = Math.max(1, Math.round(left / 3600000));
+    return { fi: `Vaihe päättyy tänään ${WD_FI[wd]} ${dateTxt} klo ${timeTxt}, joten aikaa on jäljellä enää noin ${h} ${h === 1 ? 'tunti' : 'tuntia'}.`, en: `The phase ends today, ${WD_EN[wd]} ${dateTxt}, at ${timeTxt}, leaving only about ${h} ${h === 1 ? 'hour' : 'hours'}.` };
+  }
+  if (days === 1) return { fi: `Vaihe päättyy huomenna ${WD_FI[wd]} ${dateTxt} klo ${timeTxt}.`, en: `The phase ends tomorrow, ${WD_EN[wd]} ${dateTxt}, at ${timeTxt}.` };
+  return { fi: `Vaihe päättyy ${WD_FI[wd]} ${dateTxt} klo ${timeTxt}, joten aikaa on jäljellä ${days} päivää.`, en: `The phase ends on ${WD_EN[wd]} ${dateTxt} at ${timeTxt}, which leaves ${days} days.` };
+}
+
+function bulletinText() {
+  const ph = db.settings.phase;
+  if (ph < 1 || ph > 4) return null;
+  const total = voters().length; const missing = unlockedVoters(ph).length; const locked = total - missing;
+  const role = db.settings.publicRoleId ? `<@&${db.settings.publicRoleId}>` : 'Gaala-jäsenet';
+  const [whatFi, whatEn] = PHASE_WHAT[ph];
+  const when = bulletinWhen((db.settings.phaseEnds || {})[ph]);
+  let fi; let en;
+  if (!missing) {
+    fi = `Gaalan hallitus on ilolla todennut, että ${PHASE_IN_FI[ph]} jokainen ${total} jäsenestä on lyönyt ${whatFi} lukkoon. Hallitus esittää tästä lämpimät kiitoksensa. ${when.fi}`;
+    en = `The Gaala Administration is delighted to report that in the ${PHASE_EN[ph]} phase, all ${total} members have locked in their ${whatEn}. The Administration extends its warmest thanks. ${when.en}`;
+  } else if (!locked) {
+    fi = `Gaalan hallitus tiedottaa, että ${PHASE_NOM_FI[ph]} on käynnissä, eikä yksikään ${total} jäsenestä ole vielä lyönyt ${whatFi} lukkoon. Hallitus odottaa ensimmäisiä lukituksia suurella mielenkiinnolla. ${when.fi} Käyttehän lyömässä valintanne lukkoon, kun vielä kerkeätte.`;
+    en = `The Gaala Administration wishes to inform you that the ${PHASE_EN[ph]} phase is underway, and none of the ${total} members has yet locked in their ${whatEn}. The Administration awaits the first submissions with great interest. ${when.en} Please be sure to lock in your choices while you still have the chance.`;
+  } else {
+    fi = `Gaalan hallitus tiedottaa, että ${PHASE_IN_FI[ph]} ${locked}/${total} jäsentä on jo lyönyt ${whatFi} lukkoon. Hallitus kiittää lämpimästi kaikkia jo lukinneita ja muistuttaa kunnioittavasti, että ${missing} ${missing === 1 ? 'jäsen ei ole' : 'jäsentä ei ole'} vielä tehnyt niin. ${when.fi} Jos valintanne ovat vielä viimeistelyä vailla, käyttehän lyömässä ne lukkoon, kun vielä kerkeätte.`;
+    en = `The Gaala Administration wishes to inform you that in the ${PHASE_EN[ph]} phase, ${locked} of ${total} members have already locked in their ${whatEn}. The Administration warmly thanks everyone who has done so and respectfully reminds the remaining ${missing} ${missing === 1 ? 'member' : 'members'} to follow suit. ${when.en} If your choices still need a finishing touch, please be sure to lock them in while you still have the chance.`;
+  }
+  return [
+    `Arvoisat ${role}!`, '', fi, '',
+    'Same in English for our international people:', '',
+    `Esteemed ${role}!`, '', en, '',
+    'The Gaala Administration,', 'by order of the HerrasmiesKlubi Council,', 'under the gracious patronage of Default Settings Oy', '',
+    '-# 🤖 Tämä on automaattinen viesti. / This is an automated message.',
+  ].join('\n');
+}
+
+async function sendBulletin() {
+  const content = bulletinText();
+  if (!content || !db.settings.publicWebhook) return { ok: false, status: 0 };
+  const roles = db.settings.publicRoleId ? [db.settings.publicRoleId] : [];
+  const r = await postDiscord(content, db.settings.publicWebhook, { allowed_mentions: { parse: [], roles } });
+  if (r.ok) { db.settings.bulletinLastSent = now(); writeDb(); }
+  else console.error(`[discord] tiedotteen lähetys epäonnistui: HTTP ${r.status}`);
+  return { ok: r.ok, status: r.status };
+}
+
+function bulletinTick() {
+  const ph = db.settings.phase; const time = bulletinTime();
+  if (!db.settings.publicWebhook || !time || ph < 1 || ph > 4) return;
+  const t = tzNow();
+  if (t.time < time) return;
+  const sent = (db.notifySent = db.notifySent || {});
+  const key = `bulletin:${t.date}`;
+  if (sent[key]) return;
+  sent[key] = now(); writeDb();
+  sendBulletin().catch((e) => console.error(`[discord] tiedotteen lähetys epäonnistui: ${(e && e.message) || e}`));
+}
+
+route('POST', '/api/admin/bulletin-settings', ({ user, body }) => {
+  const s = db.settings;
+  if ('webhook' in body) {
+    const url = String(body.webhook || '').trim();
+    if (url && !WEBHOOK_RE.test(url)) fail(400, 'Tämä ei näytä Discordin webhook-osoitteelta (https://discord.com/api/webhooks/…).');
+    if (url && url === webhookUrl()) fail(400, 'Tämä on adminien ilmoituskanavan webhook. Julkiselle tiedotteelle tarvitaan osallistujien kanavan oma webhook.');
+    s.publicWebhook = url;
+  }
+  if ('roleId' in body) {
+    const id = String(body.roleId || '').trim().replace(/^<@&|>$/g, '');
+    if (id && !/^\d{15,22}$/.test(id)) fail(400, 'Roolin ID on numerosarja (Discord: Kehittäjätila → oikea klikkaus roolille → Kopioi roolin ID).');
+    s.publicRoleId = id;
+  }
+  if ('time' in body) {
+    const t = String(body.time || '').trim();
+    if (t && !/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) fail(400, 'Kellonaika on virheellinen (esim. 12:00).');
+    s.bulletinTime = t;
+  }
+  writeDb();
+  return { ...stateFor(user), notice: 'Tiedoteasetukset tallennettu.' };
+}, { admin: true });
+
+route('GET', '/api/admin/bulletin-preview', () => ({ text: bulletinText() || 'Tiedotetta ei lähetetä vaiheessa 5 (äänestys suljettu).' }), { admin: true });
+
+route('POST', '/api/admin/bulletin-send', async ({ user }) => {
+  if (!db.settings.publicWebhook) fail(400, 'Aseta ensin osallistujien kanavan webhook.');
+  if (!bulletinText()) fail(409, 'Tiedotetta ei lähetetä vaiheessa 5 (äänestys suljettu).');
+  let r;
+  try { r = await sendBulletin(); } catch (e) { fail(502, `Discordiin ei saatu yhteyttä: ${(e && e.message) || e}`); }
+  if (r.status === 401 || r.status === 404) fail(400, 'Discord ei tunnista webhookia. Onko se poistettu? Luo uusi ja tallenna se.');
+  if (!r.ok) fail(502, `Discord vastasi virheellä (HTTP ${r.status}).`);
+  // tämän päivän automaattinen tiedote katsotaan lähetetyksi, ettei samaa tule kahdesti
+  (db.notifySent = db.notifySent || {})[`bulletin:${tzNow().date}`] = now(); writeDb();
+  return { ...stateFor(user), notice: 'Tiedote lähetetty osallistujien kanavalle.' };
+}, { admin: true });
 
 // Hallinta: webhookin asetus, ilmoitustyypit ja päivittäisen muistutuksen kellonaika
 route('POST', '/api/admin/notify-settings', ({ user, body }) => {

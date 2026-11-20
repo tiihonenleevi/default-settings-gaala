@@ -399,6 +399,36 @@ function notifyPanel() {
     </form>`;
 }
 
+// Julkinen päivittäinen tiedote osallistujien Discord-kanavalle (oma webhook): lukitustilanne ja aikaa jäljellä.
+let bulletinPreview = null; // esikatseltava tiedoteteksti
+function bulletinPanel() {
+  const b = state.admin.bulletin || { set: false, roleId: '', time: '12:00' };
+  return `
+    <form class="panel notify-panel" id="bulletin-form">
+      <p class="eyebrow">Julkinen päivittäinen tiedote</p>
+      <p class="small" style="margin:0">${b.set
+        ? `<b class="notify-on">● Käytössä.</b> Tiedote lähtee osallistujien kanavalle ${b.time ? `joka päivä klo ${esc(b.time)}` : 'vain käsin (kellonaika tyhjä)'} vaiheissa 1–4.${b.lastSent ? ` Viimeksi lähetetty ${fmtTime(b.lastSent)}.` : ''}`
+        : '<b class="notify-off">● Pois päältä.</b> Virallinen kaksikielinen tiedote osallistujien kanavalle: montako on lyönyt vaiheen lukkoon ja paljonko aikaa on jäljellä. Ei nimiä.'}</p>
+      <div class="field"><label for="b-url">${b.set ? 'Vaihda osallistujien kanavan webhook' : 'Osallistujien kanavan webhook-osoite'}</label>
+        <input class="input" id="b-url" type="password" autocomplete="off" spellcheck="false" placeholder="https://discord.com/api/webhooks/…" data-keep>
+        <span class="small muted">Eri webhook kuin adminien ilmoituksissa: tee se kanavalle, jonka gaalaosallistujat näkevät.</span></div>
+      <div class="bulletin-grid">
+        <div class="field"><label for="b-role">Pingattavan roolin ID (valinnainen)</label>
+          <input class="input" id="b-role" inputmode="numeric" autocomplete="off" value="${esc(b.roleId || '')}" placeholder="esim. 1234567890123456789">
+          <span class="small muted">Esim. @Gaala-jäsenet. Discord: Asetukset → Lisäasetukset → Kehittäjätila päälle, sitten Palvelimen asetukset → Roolit → roolin ⋯ → Kopioi roolin ID. Tyhjä = ei pingiä, tekstissä lukee "Gaala-jäsenet".</span></div>
+        <div class="field"><label for="b-time">Lähetysaika joka päivä klo</label>
+          <input class="input" id="b-time" type="time" style="max-width:200px" value="${esc(b.time || '')}">
+          <span class="small muted">Tyhjä = ei automaattista lähetystä, vain "Lähetä nyt".</span></div>
+      </div>
+      <div class="row" style="gap:10px;flex-wrap:wrap">
+        <button class="btn btn--secondary btn--sm" type="submit">Tallenna tiedoteasetukset</button>
+        <button class="btn btn--ghost" type="button" data-act="bulletin-preview">Esikatsele</button>
+        ${b.set ? '<button class="btn btn--ghost" type="button" data-act="bulletin-send">Lähetä nyt</button><button class="btn btn--ghost" type="button" data-act="bulletin-remove">Poista webhook</button>' : ''}
+      </div>
+      ${bulletinPreview !== null ? `<div class="bulletin-preview"><p class="small muted" style="margin:0 0 8px">Esikatselu (Discordissa lihavoinnit ja pieni lopputeksti näkyvät muotoiltuina):</p><pre>${esc(bulletinPreview.replace(/<@&\d+>/g, '@Gaala-jäsenet'))}</pre></div>` : ''}
+    </form>`;
+}
+
 // Alle K18 -kytkin: päällä ollessa kaikille näytetään profiilikuvien sijaan erikseen valitut <18-kuvat.
 function k18Panel() {
   const a = state.admin; const on = !!a.safeMode;
@@ -996,6 +1026,8 @@ function adminView() {
 
     ${notifyPanel()}
 
+    ${bulletinPanel()}
+
     <div style="display:grid;gap:12px">
       <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
         <p class="eyebrow">Kategoriat · jatkoon ${advanced.length} / ${L.targetCategories}</p>
@@ -1517,6 +1549,15 @@ document.addEventListener('click', async (e) => {
       // Testikäyttäjällä vain paikallisesti; muuten pyyntö palvelimelle, joka ilmoittaa adminien Discord-kanavalle
       if (isTest()) { state.me.unlockRequested = true; render(); break; }
       await api('POST', '/api/unlock-request', {}).catch(() => {});
+      break;
+    case 'bulletin-preview':
+      try { bulletinPreview = (await api('GET', '/api/admin/bulletin-preview')).text; render(); } catch {}
+      break;
+    case 'bulletin-send':
+      if (confirm('Lähetetäänkö tiedote nyt osallistujien kanavalle? Tämän päivän automaattista tiedotetta ei silloin lähetetä erikseen.')) await api('POST', '/api/admin/bulletin-send', {}).catch(() => {});
+      break;
+    case 'bulletin-remove':
+      if (confirm('Poistetaanko osallistujien kanavan webhook? Päivittäiset tiedotteet loppuvat.')) await api('POST', '/api/admin/bulletin-settings', { webhook: '' }).catch(() => {});
       break;
     case 'notify-test':
       await api('POST', '/api/admin/notify-test', {}).catch(() => {});
@@ -2054,6 +2095,12 @@ document.addEventListener('submit', async (e) => {
       if (isTest()) { simulate('feedback', { text, msg: 'Palaute lähetetty.' }); clear('fb-text'); return; }
       await api('POST', '/api/feedback', { text });
       clear('fb-text');
+    } else if (f.id === 'bulletin-form') {
+      const body = { roleId: v('b-role'), time: v('b-time') };
+      const url = v('b-url');
+      if (url) body.webhook = url;
+      await api('POST', '/api/admin/bulletin-settings', body);
+      clear('b-url');
     } else if (f.id === 'notify-form') {
       const body = { kinds: Object.fromEntries(Object.keys(NOTIFY_LABELS).map((k) => [k, !!document.getElementById(`n-k-${k}`)?.checked])), reminderTime: v('n-time') };
       const url = v('n-url');

@@ -55,6 +55,10 @@ Ilmoitukset (kunkin tyypin voi kytkeä pois hallinnasta):
 - **Muistutukset** vaiheissa 1–4: lukitsemattomien lista kerran päivässä valittuun aikaan (oletus 18:00), 24 h ja 2 h ennen vaiheen päättymistä sekä päättymisajan mentyä. Ajat ovat Suomen aikaa (`GAALA_TZ`, oletus `Europe/Helsinki`).
 
 Jos webhookia ei ole asetettu, ilmoitukset ovat pois päältä. Discordin katko ei vaikuta gaalaan.
+
+### Julkinen päivittäinen tiedote
+
+Toinen, erillinen webhook osallistujien kanavalle (hallinta → **Julkinen päivittäinen tiedote**). Vaiheissa 1–4 palvelin lähettää kerran päivässä valittuun aikaan (oletus 12:00) virallisen kaksikielisen tiedotteen: montako jäsentä on lyönyt vaiheen lukkoon ja paljonko aikaa vaiheen päättymiseen on (tänään / huomenna / N päivää, vaiheen päättymisajan mukaan). Tiedotteessa ei ole nimiä. Lopussa on allekirjoitus ja maininta automaattisesta viestistä. Pingattavan roolin (esim. @Gaala-jäsenet) voi asettaa roolin ID:llä; muuten ketään ei pingata. Hallinnassa tekstin voi esikatsella ja lähettää heti (**Lähetä nyt**).
 ## Käynnistys
 
 ```bash
