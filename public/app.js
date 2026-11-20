@@ -373,6 +373,32 @@ function suggestButton() {
   return `<button class="btn btn--ghost suggest-btn${photosOpen ? ' is-open' : ''}" data-act="${photosOpen ? 'photos-close' : 'photos-open'}" aria-pressed="${photosOpen}"><span class="long-label">Ehdota profiilikuvia</span><span class="short-label" aria-hidden="true">Ehdota kuvia</span>${n ? ` <span class="count-badge" aria-label="${n} uutta ehdotusta">${n}</span>` : ''}</button>`;
 }
 
+// Discord-ilmoitukset: palvelin lähettää tapahtumat adminien Discord-kanavalle webhookin kautta.
+// Webhook-osoite on salaisuus: se tallennetaan palvelimelle eikä sitä koskaan näytetä takaisin selaimessa.
+const NOTIFY_LABELS = { errors: 'Virheet (kuvalataukset, palvelinvirheet)', locks: 'Lukitukset ja "kaikki lukinneet"', phases: 'Vaiheen vaihtuminen', feedback: 'Palautteet (kirjoittajan nimellä)', photos: 'Kuvaehdotukset', reminders: 'Muistutukset lukitsemattomista' };
+function notifyPanel() {
+  const n = state.admin.notify || { set: false, kinds: {}, reminderTime: '18:00' };
+  return `
+    <form class="panel notify-panel" id="notify-form">
+      <p class="eyebrow">Discord-ilmoitukset</p>
+      <p class="small" style="margin:0">${n.set
+        ? `<b class="notify-on">● Käytössä.</b> ${n.fromEnv ? 'Webhook tulee palvelimen ympäristömuuttujasta (DISCORD_WEBHOOK).' : 'Webhook on tallennettu palvelimelle.'}`
+        : '<b class="notify-off">● Pois päältä.</b> Liitä alle Discord-kanavan webhook-osoite (kanavan asetukset → Integraatiot → Webhookit).'}</p>
+      <div class="field"><label for="n-url">${n.set ? 'Vaihda webhook-osoite' : 'Webhook-osoite'}</label>
+        <input class="input" id="n-url" type="password" autocomplete="off" spellcheck="false" placeholder="https://discord.com/api/webhooks/…" data-keep>
+        <span class="small muted">Osoite on salaisuus: kuka tahansa, jolla se on, voi lähettää kanavalle. Sitä ei näytetä täällä tallennuksen jälkeen.</span></div>
+      <fieldset class="notify-kinds"><legend class="small muted">Ilmoitukset</legend>
+        ${Object.entries(NOTIFY_LABELS).map(([k, label]) => `<label class="check small"><input type="checkbox" id="n-k-${k}" ${n.kinds[k] !== false ? 'checked' : ''}> ${label}</label>`).join('')}
+      </fieldset>
+      <div class="field"><label for="n-time">Päivittäinen muistutus klo</label><input class="input" id="n-time" type="time" style="max-width:200px" value="${esc(n.reminderTime || '')}"><span class="small muted">Lukitsemattomien lista kerran päivässä vaiheissa 1–4. Tyhjä = ei päivittäistä muistutusta. Lisäksi muistutus 24 h ja 2 h ennen vaiheen päättymistä sekä päättymisen jälkeen.</span></div>
+      <div class="row" style="gap:10px;flex-wrap:wrap">
+        <button class="btn btn--secondary btn--sm" type="submit">Tallenna ilmoitusasetukset</button>
+        ${n.set ? '<button class="btn btn--ghost" type="button" data-act="notify-test">Lähetä testiviesti</button>' : ''}
+        ${n.set && !n.fromEnv ? '<button class="btn btn--ghost" type="button" data-act="notify-remove">Poista webhook</button>' : ''}
+      </div>
+    </form>`;
+}
+
 // Alle K18 -kytkin: päällä ollessa kaikille näytetään profiilikuvien sijaan erikseen valitut <18-kuvat.
 function k18Panel() {
   const a = state.admin; const on = !!a.safeMode;
@@ -962,6 +988,8 @@ function adminView() {
       <div><button class="btn btn--secondary btn--sm" type="submit">Tallenna asetukset</button></div>
     </form>
 
+    ${notifyPanel()}
+
     <div style="display:grid;gap:12px">
       <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
         <p class="eyebrow">Kategoriat · jatkoon ${advanced.length} / ${L.targetCategories}</p>
@@ -1479,6 +1507,12 @@ document.addEventListener('click', async (e) => {
       } catch {}
       break;
     }
+    case 'notify-test':
+      await api('POST', '/api/admin/notify-test', {}).catch(() => {});
+      break;
+    case 'notify-remove':
+      if (confirm('Poistetaanko webhook? Discord-ilmoitukset loppuvat.')) await api('POST', '/api/admin/notify-settings', { webhook: '' }).catch(() => {});
+      break;
     case 'safe-del':
       if (confirm('Poistetaanko <18-kuvan valinta? Kuva jää kuvaversioihin.')) await api('DELETE', `/api/admin/users/${id}/safe-photo`, {}).catch(() => {});
       break;
@@ -2009,6 +2043,12 @@ document.addEventListener('submit', async (e) => {
       if (isTest()) { simulate('feedback', { text, msg: 'Palaute lähetetty.' }); clear('fb-text'); return; }
       await api('POST', '/api/feedback', { text });
       clear('fb-text');
+    } else if (f.id === 'notify-form') {
+      const body = { kinds: Object.fromEntries(Object.keys(NOTIFY_LABELS).map((k) => [k, !!document.getElementById(`n-k-${k}`)?.checked])), reminderTime: v('n-time') };
+      const url = v('n-url');
+      if (url) body.webhook = url;
+      await api('POST', '/api/admin/notify-settings', body);
+      clear('n-url');
     } else if (f.id === 'settings-form') {
       await api('POST', '/api/admin/settings', { deadline: '', phaseEnds: { 1: v('s-end1'), 2: v('s-end2'), 3: v('s-end3'), 4: v('s-end4') }, nextStart: v('s-next'), targetCategories: v('s-tc'), catVotes: v('s-cv'), votesP2: v('s-v2'), maxCategoryProposals: v('s-mc'), maxNomineeProposals: v('s-mn'), finalists: v('s-fi') });
       toast('Asetukset tallennettu.');

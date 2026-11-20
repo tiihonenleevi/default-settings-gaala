@@ -963,3 +963,9 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 .crop-fig--wide { width: 100%; }
 .crop-fig--wide .crop-cap { max-width: none; }
 .crop-fig--wide .hof-cover { box-shadow: none; }
+/* Discord-ilmoitukset */
+.notify-panel { display: grid; gap: 14px; }
+.notify-kinds { border: 0; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 16px; }
+.notify-kinds legend { padding: 0; margin-bottom: 8px; }
+.notify-on { color: #8fd18f; font-weight: 500; }
+.notify-off { color: var(--ink-muted); font-weight: 500; }

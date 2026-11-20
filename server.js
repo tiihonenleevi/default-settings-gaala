@@ -407,6 +407,8 @@ function adminView() {
       finalVoters: db.settings.phase >= 4 ? Object.entries(db.finalVotes).filter(([, v]) => v[n.categoryId] === n.id).map(([uid]) => userName(uid) || 'poistettu').sort((a, b) => a.localeCompare(b, 'fi')) : [] })),
     safeMode: !!db.settings.safeMode,
     hofPublished: !!db.settings.hofPublished,
+    // Discord-ilmoitukset: osoitetta ei koskaan lähetetä selaimeen, vain tieto siitä, onko se asetettu
+    notify: { set: !!webhookUrl(), fromEnv: !db.settings.discordWebhook && !!process.env.DISCORD_WEBHOOK, kinds: Object.fromEntries(Object.keys(NOTIFY_KINDS).map((k) => [k, notifyOn(k)])), reminderTime: reminderTime() },
     nomVoteNeed: nomVoteNeed(null).reduce((sum, x) => sum + x.need, 0),
     voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nomVotes.map((v) => v.userId)).size, p4: Object.keys(db.finalVotes).length },
     locked: Object.values(db.users).filter((u) => !u.root && !u.tester && isLocked(u)).length,
@@ -650,6 +652,7 @@ route('POST', '/api/lock', ({ user }) => {
   if (!ready.ok) fail(400, ready.reason);
   user.locked = { ...(user.locked || {}), [db.settings.phase]: now() };
   writeDb();
+  notifyLock(user);
   return { ...stateFor(user), notice: 'Lukko sisään! Vastauksesi tähän vaiheeseen on tallennettu.' };
 });
 
@@ -665,6 +668,7 @@ route('POST', '/api/feedback', ({ user, body }) => {
   if (db.feedback.filter((f) => f.userId === user.id && (f.phase || 5) === phase).length >= 20) fail(400, 'Olet jo lähettänyt paljon palautetta.');
   db.feedback.push({ id: newId(), userId: user.id, phase, text, createdAt: now() });
   writeDb();
+  notify('feedback', `💬 **Palaute** (${phase === 5 ? 'Gaalan jälkeen' : `odotustila, vaihe ${phase}`}) · ${user.name}:\n${quote(text)}`);
   return { ...stateFor(user), notice: 'Palaute lähetetty.' };
 });
 
@@ -691,6 +695,7 @@ route('POST', '/api/photo-suggestions', ({ user, body }) => {
   const image = saveImage(body.image);
   db.photoSuggestions.push({ id: newId(), personId: person.id, by: user.id, image, crop: null, source: 'suggestion', createdAt: now() });
   writeDb();
+  notify('photos', `🖼️ **Kuvaehdotus:** ${user.name} ehdotti kuvaa henkilölle ${person.name}.`);
   return { ...stateFor(user), notice: `Kuvaehdotus lähetetty: ${person.name}.` };
 }, { maxBody: 12 * 1024 * 1024 });
 
@@ -901,7 +906,10 @@ route('POST', '/api/admin/users/:id', ({ user, params, body }) => {
   }
   if ('name' in body) { const n = clean(body.name, 40); if (n) u.name = n; }
   if (body.regenerate) { u.code = newCode(); u.token = newToken(); u.lastLogin = null; }
-  if (body.unlock && u.locked) delete u.locked[db.settings.phase];
+  if (body.unlock && u.locked && u.locked[db.settings.phase]) {
+    delete u.locked[db.settings.phase];
+    notify('locks', `🔓 ${user.name} avasi lukon: ${u.name} (vaihe ${db.settings.phase}).`);
+  }
   if ('nominable' in body) u.nominable = !!body.nominable;
   if ('tester' in body) u.tester = !!body.tester;
   writeDb();
@@ -917,6 +925,9 @@ route('POST', '/api/admin/upload-log', ({ user, body }) => {
   recent.push(t); uploadLogTimes.set(user.id, recent);
   const f = (k, n = 120) => clean(body[k], n);
   console.log(`[kuvalataus] ${now()} ${user.name}: ${f('result', 20)} | vaihe: ${f('stage', 160)} | tiedosto: "${f('name', 80)}" ${f('type', 40) || '(ei tyyppiä)'} ${Number(body.size) || 0} t | muoto: ${f('kind', 12) || '-'} | mitat: ${f('dims', 30) || '-'} | virhe: ${f('error', 300) || '-'} | selain: ${f('ua', 200)}`);
+  if (f('result', 20) === 'virhe') {
+    notify('errors', `⚠️ **Kuvalataus epäonnistui** · ${user.name}\nVirhe: ${f('error', 300) || '-'}\nTiedosto: ${f('name', 80) || '-'} · ${f('type', 40) || 'ei tyyppiä'} · ${Math.round((Number(body.size) || 0) / 1024)} kt · muoto ${f('kind', 12) || '-'} · kohta ${f('stage', 160)}\nSelain: ${browserName(f('ua', 200))}`);
+  }
   return { ok: true };
 }); // kaikki kirjautuneet: myös osallistujien kuvaehdotusten ongelmat näkyvät lokissa
 
@@ -999,9 +1010,14 @@ route('POST', '/api/admin/phase', ({ user, body }) => {
     const missing = advancedCats().filter((c) => !db.nominees.some((n) => n.categoryId === c.id && n.finalist));
     if (missing.length) fail(400, `Valitse finalistit myös näihin: ${missing.map((c) => c.name).join(', ')}.`);
   }
-  if (db.settings.phase !== phase) db.settings.nextStart = ''; // vanha "seuraava vaihe alkaa" -aika ei enää päde
+  const changed = db.settings.phase !== phase;
+  if (changed) db.settings.nextStart = ''; // vanha "seuraava vaihe alkaa" -aika ei enää päde
   db.settings.phase = phase;
   writeDb();
+  if (changed) {
+    const end = phase <= 4 && db.settings.phaseEnds && db.settings.phaseEnds[phase];
+    notify('phases', `📣 **Vaihe ${phase} avattu: ${PHASES[phase]}** (${user.name})${end ? ` · päättyy ${fmtWall(end)}` : ''}`);
+  }
   return stateFor(user);
 }, { admin: true });
 
@@ -1178,6 +1194,171 @@ function requirePhase(p) {
   if (db.settings.phase !== p) fail(409, `Tämä toiminto on käytössä vain vaiheessa ${p} (${PHASES[p]}).`);
 }
 
+// ---------- Discord-ilmoitukset ----------
+// Palvelin lähettää tapahtumista viestin Discord-kanavalle webhookin kautta (pelkkä HTTPS-pyyntö, ei bottia).
+// Osoite asetetaan hallinnasta (tallentuu tietokantaan) tai ympäristömuuttujalla DISCORD_WEBHOOK. Jos osoitetta
+// ei ole, ilmoitukset ovat pois päältä eikä mikään muu muutu. Discordin katko ei koskaan kaada gaalaa.
+const NOTIFY_KINDS = { errors: 'Virheet (kuvalataukset, palvelinvirheet)', locks: 'Lukitukset', phases: 'Vaiheen vaihtuminen', feedback: 'Palautteet', photos: 'Kuvaehdotukset', reminders: 'Muistutukset lukitsemattomista' };
+const NOTIFY_TZ = process.env.GAALA_TZ || 'Europe/Helsinki'; // vaiheiden päättymisajat ja muistutukset tämän ajan mukaan
+const WEBHOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+
+function webhookUrl() { return db.settings.discordWebhook || process.env.DISCORD_WEBHOOK || ''; }
+function notifyOn(kind) { return (db.settings.notifyKinds || {})[kind] !== false; } // oletuksena kaikki päällä
+function reminderTime() { return db.settings.reminderTime ?? '18:00'; } // '' = ei päivittäistä muistutusta
+const quote = (t) => String(t).split('\n').slice(0, 15).map((l) => `> ${l}`).join('\n').slice(0, 1500);
+function browserName(ua) {
+  const os = /iPhone|iPad/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'Mac' : '';
+  const br = /Brave/.test(ua) ? 'Brave' : /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Edg\//.test(ua) ? 'Edge' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : '';
+  return [br, os].filter(Boolean).join(' / ') || String(ua).slice(0, 80) || '-';
+}
+
+// Jono: viestit lähetetään yksi kerrallaan, ja ruuhkassa useampi yhdistetään yhdeksi (Discordin raja ~30 / min)
+const notifyQueue = [];
+let notifyBusy = false;
+function notify(kind, text) {
+  if (!webhookUrl() || !notifyOn(kind)) return;
+  notifyQueue.push(String(text).slice(0, 1900));
+  if (notifyQueue.length > 40) notifyQueue.splice(0, notifyQueue.length - 40);
+  pumpNotify();
+}
+async function postDiscord(content, url = webhookUrl()) {
+  return fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    // allowed_mentions: käyttäjien teksti (esim. "@everyone" palautteessa) ei koskaan pingaa ketään
+    body: JSON.stringify({ content, username: 'HerrasmiesKlubi Gaala', allowed_mentions: { parse: [] } }),
+    signal: AbortSignal.timeout(10000),
+  });
+}
+async function pumpNotify() {
+  if (notifyBusy) return;
+  notifyBusy = true;
+  try {
+    while (notifyQueue.length) {
+      let msg = notifyQueue.shift();
+      while (notifyQueue.length && msg.length + 2 + notifyQueue[0].length <= 1900) msg += '\n\n' + notifyQueue.shift();
+      try {
+        let r = await postDiscord(msg);
+        if (r.status === 429) { // liikaa viestejä: odotetaan Discordin pyytämä aika ja yritetään kerran uudelleen
+          const wait = Math.min(30, Number((await r.json().catch(() => ({}))).retry_after) || 2);
+          await new Promise((ok) => setTimeout(ok, wait * 1000));
+          r = await postDiscord(msg);
+        }
+        if (!r.ok) console.error(`[discord] lähetys epäonnistui: HTTP ${r.status}`);
+      } catch (e) {
+        console.error(`[discord] lähetys epäonnistui: ${(e && e.message) || e}`);
+      }
+      await new Promise((ok) => setTimeout(ok, 1500));
+    }
+  } finally {
+    notifyBusy = false;
+  }
+}
+
+// Aikavyöhykeapurit: phaseEnds on muotoa "2026-11-27T20:00" Suomen aikaa, mutta kontin kello on UTC
+function tzNow(date = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: NOTIFY_TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(date).map((x) => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
+}
+function wallToMs(wall) { // "YYYY-MM-DDTHH:MM" paikallista aikaa → millisekunnit
+  const guess = Date.parse(`${wall}:00Z`);
+  const t = tzNow(new Date(guess));
+  return guess - (Date.parse(`${t.date}T${t.time}:00Z`) - guess);
+}
+function fmtWall(wall) { // "pe 27.11. klo 20.00"
+  const [d, t] = String(wall).split('T');
+  const [y, m, dd] = d.split('-').map(Number);
+  const wd = ['su', 'ma', 'ti', 'ke', 'to', 'pe', 'la'][new Date(Date.UTC(y, m - 1, dd)).getUTCDay()];
+  return `${wd} ${dd}.${m}. klo ${String(t || '').replace(':', '.')}`;
+}
+
+function voters() { return Object.values(db.users).filter((u) => !u.root && !u.tester); }
+function unlockedVoters(phase = db.settings.phase) { return voters().filter((u) => !(u.locked && u.locked[phase])); }
+
+function notifyLock(user) {
+  const ph = db.settings.phase; const all = voters(); const missing = unlockedVoters(ph);
+  notify('locks', `🔒 ${user.name} lukitsi vaiheen ${ph} (${all.length - missing.length}/${all.length} lukinnut)`);
+  if (!missing.length) notify('locks', `✅ **Kaikki ${all.length} ovat lukinneet vaiheen ${ph} (${PHASES[ph]}).** Seuraavan vaiheen voi avata hallinnasta.`);
+}
+
+// Muistutukset: tarkistetaan kerran minuutissa. Lähetetyt muistutukset merkitään tietokantaan (notifySent),
+// joten samaa muistutusta ei lähetetä kahdesti, vaikka palvelin käynnistyisi uudelleen.
+function reminderTick() {
+  const ph = db.settings.phase;
+  if (!webhookUrl() || !notifyOn('reminders') || ph < 1 || ph > 4) return;
+  const sent = (db.notifySent = db.notifySent || {});
+  let dirty = false;
+  const mark = (key) => { if (sent[key]) return false; sent[key] = now(); dirty = true; return true; };
+  const missing = unlockedVoters(ph); const total = voters().length;
+  const names = missing.map((u) => u.name).join(', ');
+  const end = (db.settings.phaseEnds || {})[ph];
+  const endTxt = end ? ` · vaihe päättyy ${fmtWall(end)}` : '';
+  const msgs = [];
+  if (end) {
+    const left = wallToMs(end) - Date.now();
+    // Lähin aikaraja ensin: jos ollaan jo alle 2 h päässä, vuorokausimuistutus merkitään lähetetyksi ilman viestiä
+    const due = [[2, 'Kaksi tuntia'], [24, 'Vuorokausi']].find(([h]) => left > 0 && left <= h * 3600e3);
+    if (due) {
+      const [h, label] = due;
+      const fresh = mark(`end${h}:${ph}:${end}`);
+      if (h === 2) mark(`end24:${ph}:${end}`);
+      if (fresh && missing.length) msgs.push(`⏳ **${label} vaiheen ${ph} loppuun** (${fmtWall(end)}): ${missing.length}/${total} lukitsematta: ${names}`);
+    }
+    if (left <= 0 && left > -12 * 3600e3 && mark(`ended:${ph}:${end}`)) {
+      msgs.push(missing.length
+        ? `🏁 **Vaiheen ${ph} päättymisaika meni** (${fmtWall(end)}). Lukitsematta ${missing.length}/${total}: ${names}. Vaihe vaihtuu, kun admin avaa seuraavan.`
+        : `🏁 **Vaiheen ${ph} päättymisaika meni** (${fmtWall(end)}). Kaikki ovat lukinneet, seuraavan vaiheen voi avata.`);
+    }
+  }
+  // Päivittäinen muistutus (ei samalla kertaa, jos päättymismuistutus juuri lähti)
+  const { date, time } = tzNow();
+  const daily = reminderTime();
+  if (daily && time >= daily && mark(`daily:${date}:${ph}`) && missing.length && !msgs.length) {
+    msgs.push(`⏰ **Päivän muistutus · vaihe ${ph} (${PHASES[ph]})**: ${missing.length}/${total} lukitsematta: ${names}${endTxt}`);
+  }
+  const keys = Object.keys(sent);
+  if (keys.length > 300) { for (const k of keys.sort((a, b) => sent[a].localeCompare(sent[b])).slice(0, keys.length - 300)) delete sent[k]; dirty = true; }
+  if (dirty) writeDb();
+  for (const m of msgs) notify('reminders', m);
+}
+const safeTick = () => { try { reminderTick(); } catch (e) { console.error('[discord] muistutus epäonnistui', e); } };
+setTimeout(safeTick, 10 * 1000).unref(); // heti käynnistyksen jälkeen (esim. päivityksen jälkeen kesken päivän)
+setInterval(safeTick, 60 * 1000).unref();
+
+// Hallinta: webhookin asetus, ilmoitustyypit ja päivittäisen muistutuksen kellonaika
+route('POST', '/api/admin/notify-settings', ({ user, body }) => {
+  const s = db.settings;
+  if ('webhook' in body) {
+    const url = String(body.webhook || '').trim();
+    if (url && !WEBHOOK_RE.test(url)) fail(400, 'Tämä ei näytä Discordin webhook-osoitteelta (https://discord.com/api/webhooks/…).');
+    s.discordWebhook = url;
+  }
+  if (body.kinds && typeof body.kinds === 'object') {
+    s.notifyKinds = Object.fromEntries(Object.keys(NOTIFY_KINDS).map((k) => [k, body.kinds[k] !== false]));
+  }
+  if ('reminderTime' in body) {
+    const t = String(body.reminderTime || '').trim();
+    if (t && !/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) fail(400, 'Muistutuksen kellonaika on virheellinen (esim. 18:00).');
+    s.reminderTime = t;
+  }
+  writeDb();
+  return { ...stateFor(user), notice: 'Ilmoitusasetukset tallennettu.' };
+}, { admin: true });
+
+route('POST', '/api/admin/notify-test', async ({ user }) => {
+  if (!webhookUrl()) fail(400, 'Aseta ensin webhook-osoite.');
+  const ph = db.settings.phase; const missing = unlockedVoters(ph);
+  let r;
+  try {
+    r = await postDiscord(`👋 **Testiviesti HerrasmiesKlubi Gaalasta** (${user.name})\nVaihe ${ph} · ${PHASES[ph]}${ph <= 4 ? ` · ${voters().length - missing.length}/${voters().length} lukinnut` : ''}`);
+  } catch (e) {
+    fail(502, `Discordiin ei saatu yhteyttä: ${(e && e.message) || e}`);
+  }
+  if (r.status === 401 || r.status === 404) fail(400, 'Discord ei tunnista webhookia. Onko se poistettu? Luo uusi ja tallenna se.');
+  if (!r.ok) fail(502, `Discord vastasi virheellä (HTTP ${r.status}).`);
+  return { ...stateFor(user), notice: 'Testiviesti lähetetty Discordiin.' };
+}, { admin: true });
+
 // ---------- Staattiset tiedostot ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
 
@@ -1223,7 +1404,10 @@ const server = http.createServer(async (req, res) => {
     send(res, 200, await r.handler({ req, res, user, body, params }));
   } catch (e) {
     if (e instanceof HttpError) send(res, e.status, { error: e.message });
-    else { console.error(e); send(res, 500, { error: 'Palvelinvirhe.' }); }
+    else {
+      console.error(e); send(res, 500, { error: 'Palvelinvirhe.' });
+      notify('errors', `🛑 **Palvelinvirhe** ${req.method} ${pathname}\n${String((e && e.message) || e).slice(0, 300)}`);
+    }
   }
 });
 

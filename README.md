@@ -37,6 +37,23 @@ Adminit hallitsevat sivua sen alalaidasta:
 - **Kansikuva**: jokaiselle vuodelle voi lisätä kansikuvan (esim. ryhmäkuva gaalasta), joka näkyy "Gaala 2025" -otsikon alla. Se lisätään lomakkeen yläosasta samoilla tavoilla kuin ehdokkaiden kuvat (klikkaus, raahaus tai liittäminen) ja rajataan leveään 16:9-muotoon. Alle K18 -tilassa kansikuva on piilossa.
 - Tallennettuja vuosia voi muokata ja poistaa.
 
+
+## Discord-ilmoitukset
+
+Palvelin voi lähettää tapahtumista ilmoituksen adminien Discord-kanavalle **webhookin** kautta (pelkkä HTTPS-pyyntö, ei bottia).
+
+1. Discordissa: kanavan asetukset → **Integraatiot → Webhookit → Uusi webhook** → **Kopioi webhookin URL**.
+2. Gaalan hallinnassa: **Discord-ilmoitukset** → liitä osoite → **Tallenna ilmoitusasetukset** → **Lähetä testiviesti**.
+
+Osoite on salaisuus: se tallennetaan palvelimelle (`data/db.json`) eikä sitä näytetä selaimessa tallennuksen jälkeen. Vaihtoehtoisesti sen voi antaa ympäristömuuttujana `DISCORD_WEBHOOK`.
+
+Ilmoitukset (kunkin tyypin voi kytkeä pois hallinnasta):
+- **Virheet:** epäonnistuneet kuvalataukset (käyttäjä, tiedosto, virhe, selain) ja palvelinvirheet
+- **Lukitukset:** kuka lukitsi ja montako on lukinnut, ilmoitus kun kaikki ovat lukinneet, adminin avaamat lukot
+- **Vaiheen vaihtuminen**, **palautteet** (kirjoittajan nimellä) ja **kuvaehdotukset**
+- **Muistutukset** vaiheissa 1–4: lukitsemattomien lista kerran päivässä valittuun aikaan (oletus 18:00), 24 h ja 2 h ennen vaiheen päättymistä sekä päättymisajan mentyä. Ajat ovat Suomen aikaa (`GAALA_TZ`, oletus `Europe/Helsinki`).
+
+Jos webhookia ei ole asetettu, ilmoitukset ovat pois päältä. Discordin katko ei vaikuta gaalaan.
 ## Käynnistys
 
 ```bash
