@@ -399,6 +399,18 @@ function notifyPanel() {
     </form>`;
 }
 
+// Discordin muotoilun yksinkertainen esitys esikatselua varten: **lihavointi**, *kursiivi*, "-# " pieni teksti, roolimaininta
+function discordMd(text) {
+  return text.split('\n').map((line) => {
+    const small = line.startsWith('-# ');
+    let h = esc(small ? line.slice(3) : line)
+      .replace(/&lt;@&amp;\d+&gt;/g, '<span class="dc-mention">@Gaala-jäsenet</span>')
+      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+      .replace(/\*(.+?)\*/g, '<i>$1</i>');
+    return small ? `<small class="dc-sub">${h}</small>` : h;
+  }).join('<br>');
+}
+
 // Julkinen päivittäinen tiedote osallistujien Discord-kanavalle (oma webhook): lukitustilanne ja aikaa jäljellä.
 let bulletinPreview = null; // esikatseltava tiedoteteksti
 function bulletinPanel() {
@@ -425,7 +437,7 @@ function bulletinPanel() {
         <button class="btn btn--ghost" type="button" data-act="bulletin-preview">Esikatsele</button>
         ${b.set ? '<button class="btn btn--ghost" type="button" data-act="bulletin-send">Lähetä nyt</button><button class="btn btn--ghost" type="button" data-act="bulletin-remove">Poista webhook</button>' : ''}
       </div>
-      ${bulletinPreview !== null ? `<div class="bulletin-preview"><p class="small muted" style="margin:0 0 8px">Esikatselu (Discordissa lihavoinnit ja pieni lopputeksti näkyvät muotoiltuina):</p><pre>${esc(bulletinPreview.replace(/<@&\d+>/g, '@Gaala-jäsenet'))}</pre></div>` : ''}
+      ${bulletinPreview !== null ? `<div class="bulletin-preview"><p class="small muted" style="margin:0 0 8px">Esikatselu suunnilleen niin kuin se näkyy Discordissa:</p><div class="bulletin-text">${discordMd(bulletinPreview)}</div></div>` : ''}
     </form>`;
 }
 

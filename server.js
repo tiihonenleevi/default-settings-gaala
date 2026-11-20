@@ -1404,10 +1404,11 @@ function bulletinText() {
   }
   return [
     `Arvoisat ${role}!`, '', fi, '',
-    'Same in English for our international people:', '',
+    '**Same in English for our international people:**', '',
     `Esteemed ${role}!`, '', en, '',
-    'The Gaala Administration,', 'by order of the HerrasmiesKlubi Council,', 'under the gracious patronage of Default Settings Oy', '',
-    '-# 🤖 Tämä on automaattinen viesti. / This is an automated message.',
+    // allekirjoitus kursiivilla rivi kerrallaan (Discordin *…* ei aina jatku rivinvaihdon yli)
+    '*The Gaala Administration,*', '*by order of the HerrasmiesKlubi Council,*', '*under the gracious patronage of Default Settings Oy*', '',
+    '-# Tämä on automaattinen viesti. / This is an automated message.',
   ].join('\n');
 }
 
