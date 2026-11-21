@@ -676,6 +676,11 @@ function bulletinPanel() {
           <input class="input" id="b-time" type="time" style="max-width:200px" value="${esc(b.time || '')}">
           <span class="small muted">Tyhjä = ei automaattista lähetystä, vain "Lähetä nyt".</span></div>
         <label class="check small" style="grid-column:1/-1"><input type="checkbox" id="b-names" ${b.names !== false ? 'checked' : ''}> Listaa tiedotteessa lukitsemattomien nimet (ei, jos kukaan ei ole vielä lukinnut)</label>
+        <fieldset class="bskip" style="grid-column:1/-1">
+          <legend class="small">Ei mukana tiedotteessa</legend>
+          <p class="small muted" style="margin:0">Esim. adminit, jotka ehdottavat mutta eivät äänestä. Valitut eivät näy tiedotteen lukumäärissä ("7/12 jäsentä") eivätkä nimilistassa. Adminien kanavan muistutuksiin tämä ei vaikuta.</p>
+          <div class="bskip-list">${state.admin.participants.filter((p) => !p.tester).map((p) => `<label class="check small"><input type="checkbox" data-bskip="${p.id}" ${(b.skip || []).includes(p.id) ? 'checked' : ''}> ${esc(p.name)}</label>`).join('')}</div>
+        </fieldset>
       </div>
       <div class="row" style="gap:10px;flex-wrap:wrap">
         <button class="btn btn--secondary btn--sm" type="submit">Tallenna tiedoteasetukset</button>
@@ -2498,7 +2503,7 @@ document.addEventListener('submit', async (e) => {
     } else if (f.id === 'award-base-form') {
       await api('POST', '/api/admin/settings', { awardBaseUrl: v('aw-base') });
     } else if (f.id === 'bulletin-form') {
-      const body = { roleId: v('b-role'), time: v('b-time'), names: !!document.getElementById('b-names')?.checked };
+      const body = { roleId: v('b-role'), time: v('b-time'), names: !!document.getElementById('b-names')?.checked, skip: [...document.querySelectorAll('[data-bskip]:checked')].map((x) => x.dataset.bskip) };
       const url = v('b-url');
       if (url) body.webhook = url;
       await api('POST', '/api/admin/bulletin-settings', body);

@@ -465,7 +465,7 @@ function adminView() {
     awards: awardsAdmin(),
     // Discord-ilmoitukset: osoitetta ei koskaan lähetetä selaimeen, vain tieto siitä, onko se asetettu
     notify: { set: !!webhookUrl(), fromEnv: !db.settings.discordWebhook && !!process.env.DISCORD_WEBHOOK, kinds: Object.fromEntries(Object.keys(NOTIFY_KINDS).map((k) => [k, notifyOn(k)])), reminderTime: reminderTime() },
-    bulletin: { set: !!db.settings.publicWebhook, roleId: db.settings.publicRoleId || '', time: bulletinTime(), names: bulletinNamesOn(), lastSent: db.settings.bulletinLastSent || '' },
+    bulletin: { set: !!db.settings.publicWebhook, roleId: db.settings.publicRoleId || '', time: bulletinTime(), names: bulletinNamesOn(), skip: [...bulletinSkip()], lastSent: db.settings.bulletinLastSent || '' },
     rankCats: rankNeed(null).filter((x) => x.need > 0).length,
     voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nominees.filter((n) => n.by).map((n) => n.by)).size, p4: Object.keys(db.nomRanks).filter((uid) => db.users[uid] && advancedCats().some((c) => myRanking(uid, c.id).some(Boolean))).length, p5: Object.keys(db.finalVotes).length },
     locked: Object.values(db.users).filter((u) => !u.root && !u.tester && isLocked(u)).length,
@@ -1546,6 +1546,10 @@ setInterval(safeTick, 60 * 1000).unref();
 // oletuksena päällä). Jos kukaan ei ole vielä lukinnut, listaa ei näytetä (siinä olisivat kaikki).
 function bulletinTime() { return db.settings.bulletinTime ?? '12:00'; }
 const bulletinNamesOn = () => db.settings.bulletinNames !== false;
+// Tiedotteen ulkopuolelle rajatut (esim. adminit, jotka ehdottavat mutta eivät äänestä): eivät näy
+// tiedotteen lukumäärissä eivätkä nimilistassa. Adminien kanavan muistutuksiin rajaus ei vaikuta.
+const bulletinSkip = () => new Set(db.settings.bulletinSkip || []);
+const bulletinVoters = () => { const skip = bulletinSkip(); return voters().filter((u) => !skip.has(u.id)); };
 // Discordin muotoilumerkit nimissä (*, _, ~ jne.) näytetään sellaisinaan eikä muotoiluna
 const mdEscape = (t) => String(t).replace(/([\\*_~`|>#\[\]()-])/g, '\\$1');
 const DISCORD_MAX = 2000;
@@ -1580,8 +1584,9 @@ function bulletinWhen(end) {
 function bulletinText() {
   const ph = db.settings.phase;
   if (ph < 1 || ph > LAST_OPEN) return null;
-  const missingUsers = unlockedVoters(ph).sort((a, b) => a.name.localeCompare(b.name, 'fi'));
-  const total = voters().length; const missing = missingUsers.length; const locked = total - missing;
+  const members = bulletinVoters();
+  const missingUsers = members.filter((u) => !(u.locked && u.locked[ph])).sort((a, b) => a.name.localeCompare(b.name, 'fi'));
+  const total = members.length; const missing = missingUsers.length; const locked = total - missing;
   const role = db.settings.publicRoleId ? `<@&${db.settings.publicRoleId}>` : 'Gaala-jäsenet';
   const [whatFi, whatEn] = PHASE_WHAT[ph];
   const when = bulletinWhen((db.settings.phaseEnds || {})[ph]);
@@ -1656,6 +1661,7 @@ route('POST', '/api/admin/bulletin-settings', ({ user, body }) => {
     s.bulletinTime = t;
   }
   if ('names' in body) s.bulletinNames = !!body.names;
+  if (Array.isArray(body.skip)) s.bulletinSkip = [...new Set(body.skip.map(String))].filter((id) => voters().some((u) => u.id === id));
   writeDb();
   return { ...stateFor(user), notice: 'Tiedoteasetukset tallennettu.' };
 }, { admin: true });
