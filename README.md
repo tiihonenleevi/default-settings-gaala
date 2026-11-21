@@ -43,7 +43,8 @@ Adminit hallitsevat sivua sen alalaidasta:
 
 Jokaisella Gaalaan päässeellä kategorialla on oma **palkintosivu** osoitteessa `/p/<tunniste>`, jonka QR-koodin voi tulostaa pokaalin pohjaan. Sivulla on kategorian nimi ja palkintokoroke: 2. sija vasemmalla, 1. keskellä korkeimmalla ja 3. oikealla, kuvineen. Sivu näkyy **ilman kirjautumista**, mutta muualta sivustolta ei ole sinne linkkiä. Tunniste on satunnainen, joten sivuja ei voi arvata.
 
-- Hallinnassa (**Palkintosivut ja QR-koodit**) on jokaisen kategorian QR-koodi, linkki ja PNG-lataus (1200 px) sekä **Tulosta kaikki QR-koodit** -arkki. Tarkista **QR-koodien osoite** (Funnelin osoite) ennen tulostamista.
+- Hallinnassa (**Palkintosivut ja QR-koodit**) on jokaisen kategorian QR-koodi, linkki ja PNG-lataus (1200 px) sekä **Tulosta kaikki QR-koodit** -arkki.
+- **Lataa SVG (3D)** tekee 3D-mallinnukseen sopivan SVG:n (esim. Fusion 360: Insert → Insert SVG): koko millimetreinä (oletus 40 mm, sisältää 4 ruudun reunuksen), tummat ruudut yhtenäisinä ääriviivoina ilman taustaa. **Lataa kaikki SVG:t** lataa koko vuoden kerralla. Tarkista **QR-koodien osoite** (Funnelin osoite) ennen tulostamista.
 - Ennen julkaisua sivulla lukee "Voittaja julkistetaan Gaalassa". **Julkaise tulokset** paljastaa sijat kaikilla sivuilla; auki olevat sivut päivittyvät itsestään.
 - Sijat tulevat finaalin äänimääristä (tasapelissä sama sija). **Muokkaa sijoja** asettaa ne käsin.
 - Kun vuosi arkistoidaan Hall of Fameen, sijat ja tunnisteet siirtyvät mukaan, joten pokaalin QR-koodi toimii jatkossakin. Hall of Famen lomakkeessa jokaiselle ehdokkaalle voi valita sijan (1. = voittaja), ja myös aiemmille vuosille syntyy palkintosivut.

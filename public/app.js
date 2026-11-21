@@ -259,6 +259,75 @@ function downloadQrPng(text, name) {
     setTimeout(() => URL.revokeObjectURL(link.href), 5000);
   }, 'image/png');
 }
+// SVG 3D-mallinnukseen (esim. Fusion 360: Insert → Insert SVG). Tummat moduulit yhdistetään yhtenäisiksi
+// ääriviivoiksi (ei satoja erillisiä neliöitä), joten profiilit voi pursottaa suoraan. Koko millimetreinä,
+// hiljainen reunus (4 moduulia) on mukana mittoina mutta ei muotoina, eikä taustaa ole.
+function qrOutline(qr) {
+  const n = qr.getModuleCount();
+  const dark = (r, c) => r >= 0 && c >= 0 && r < n && c < n && qr.isDark(r, c);
+  const out = new Map(); // piste "x,y" → lähtevät reunat; tumma puoli aina kulkusuunnan oikealla
+  const add = (x1, y1, x2, y2) => { const k = `${x1},${y1}`; if (!out.has(k)) out.set(k, []); out.get(k).push([x2, y2]); };
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    if (!dark(r, c)) continue;
+    if (!dark(r - 1, c)) add(c, r, c + 1, r);
+    if (!dark(r, c + 1)) add(c + 1, r, c + 1, r + 1);
+    if (!dark(r + 1, c)) add(c + 1, r + 1, c, r + 1);
+    if (!dark(r, c - 1)) add(c, r + 1, c, r);
+  }
+  const loops = [];
+  while (out.size) {
+    // aloitus pisteestä, jossa on vain yksi lähtevä reuna (ei kulmakosketuksesta), jos sellainen on
+    let startKey = null;
+    for (const [k, v] of out) { if (v.length === 1) { startKey = k; break; } }
+    if (!startKey) [startKey] = out.keys();
+    let [x, y] = startKey.split(',').map(Number);
+    const pts = [[x, y]]; let dir = null;
+    for (let guard = 0; guard < 4 * n * n + 8; guard++) {
+      const k = `${x},${y}`; const opts = out.get(k);
+      if (!opts) break;
+      // kulmittain koskettavissa moduuleissa käännytään tumman puolelle (oikealle), jolloin silmukat eivät risteä
+      let i = 0;
+      if (opts.length > 1 && dir) {
+        for (const p of [[-dir[1], dir[0]], dir, [dir[1], -dir[0]]]) { // oikealle, suoraan, vasemmalle
+          const j = opts.findIndex((o) => o[0] - x === p[0] && o[1] - y === p[1]);
+          if (j >= 0) { i = j; break; }
+        }
+      }
+      const [nx, ny] = opts.splice(i, 1)[0];
+      if (!opts.length) out.delete(k);
+      dir = [nx - x, ny - y]; x = nx; y = ny;
+      if (`${x},${y}` === startKey) break; // silmukka sulkeutui
+      pts.push([x, y]);
+    }
+    // suorat jaksot yhdeksi viivaksi
+    const simple = pts.filter((p, j) => {
+      const a = pts[(j - 1 + pts.length) % pts.length]; const b = pts[(j + 1) % pts.length];
+      return !((a[0] === p[0] && p[0] === b[0]) || (a[1] === p[1] && p[1] === b[1]));
+    });
+    loops.push(simple);
+  }
+  return { n, loops };
+}
+function qrSvgFile(text, mm) {
+  const qr = qrLib(0, 'M'); qr.addData(text); qr.make();
+  const { n, loops } = qrOutline(qr); const m = 4; const total = n + 2 * m;
+  const d = loops.map((l) => 'M' + l.map(([x, y]) => `${x + m} ${y + m}`).join('L') + 'Z').join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${mm}mm" height="${mm}mm" viewBox="0 0 ${total} ${total}">
+  <!-- ${text} · ${n}x${n} moduulia + ${m} moduulin reunus · moduuli ${(mm / total).toFixed(3)} mm -->
+  <path d="${d}" fill="#000" fill-rule="evenodd"/>
+</svg>
+`;
+}
+function downloadQrSvg(text, name) {
+  const mm = Math.min(300, Math.max(10, Number((document.getElementById('aw-mm') || {}).value) || 40));
+  const blob = new Blob([qrSvgFile(text, mm)], { type: 'image/svg+xml' });
+  const link = document.createElement('a');
+  link.download = `QR ${name.replace(/[\\/:*?"<>|]+/g, '')} ${mm}mm.svg`; link.href = URL.createObjectURL(blob);
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+}
+
 // Tulostettava arkki: kaikki QR-koodit kategorioiden nimillä
 function printQrSheet(items, title) {
   const w = window.open('', '_blank');
@@ -288,6 +357,7 @@ function awardsPanel() {
           <div class="row" style="gap:4px;flex-wrap:wrap;margin-left:-10px">
             <a class="btn btn--ghost" href="${esc(awardUrl(x.token))}" target="_blank" rel="noopener">Avaa sivu</a>
             <button class="btn btn--ghost" type="button" data-act="award-png" data-token="${x.token}" data-name="${esc(x.name)}">Lataa QR (PNG)</button>
+            <button class="btn btn--ghost" type="button" data-act="award-svg" data-token="${x.token}" data-name="${esc(x.name)}">Lataa SVG (3D)</button>
             ${cur ? `<button class="btn btn--ghost" type="button" data-act="award-edit" data-id="${x.id}">${awardEdit === x.id ? 'Sulje sijat' : 'Muokkaa sijoja'}</button>` : ''}
           </div>
           ${cur && awardEdit === x.id ? `
@@ -312,16 +382,20 @@ function awardsPanel() {
         <div class="field" style="flex:1 1 280px"><label for="aw-base">QR-koodien osoite</label><input class="input" id="aw-base" value="${esc(A.baseUrl || location.origin)}" placeholder="https://…"><span class="small muted">Osoite, jolla sivu aukeaa kaikille (Funnelin osoite). Tarkista ennen tulostamista.</span></div>
         <button class="btn btn--ghost" type="submit">Tallenna osoite</button>
       </form>
+      <div class="row" style="gap:10px;flex-wrap:wrap;align-items:end">
+        <div class="field" style="max-width:220px"><label for="aw-mm">SVG:n koko (mm)</label><input class="input" id="aw-mm" type="number" min="10" max="300" step="1" value="40" data-keep></div>
+        <p class="small muted" style="margin:0;flex:1 1 260px">SVG on 3D-mallinnukseen (esim. Fusion 360: Insert → Insert SVG). Tummat ruudut ovat yhtenäisinä ääriviivoina, joten ne voi pursottaa suoraan. Koko sisältää 4 ruudun valkoisen reunuksen; jätä se tyhjäksi pokaalin pohjaan, jotta koodi lukeutuu.</p>
+      </div>
       ${A.current.length ? `
       <div class="award-group">
         <div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><h3 class="h3" style="margin:0">Gaala ${new Date().getFullYear()}</h3>
-          <button class="btn btn--ghost" type="button" data-act="award-print" data-year="">Tulosta kaikki QR-koodit</button></div>
+          <span><button class="btn btn--ghost" type="button" data-act="award-print" data-year="">Tulosta kaikki QR-koodit</button><button class="btn btn--ghost" type="button" data-act="award-svg-all" data-year="">Lataa kaikki SVG:t</button></span></div>
         <div class="award-list">${A.current.map((x) => item(x, true)).join('')}</div>
       </div>` : ''}
       ${A.archived.map((y) => `
       <details class="award-group">
         <summary class="h3">Hall of Fame ${y.year} <span class="small muted">(${y.categories.length})</span></summary>
-        <div class="row" style="justify-content:flex-end"><button class="btn btn--ghost" type="button" data-act="award-print" data-year="${y.year}">Tulosta vuoden ${y.year} QR-koodit</button></div>
+        <div class="row" style="justify-content:flex-end;flex-wrap:wrap"><button class="btn btn--ghost" type="button" data-act="award-print" data-year="${y.year}">Tulosta vuoden ${y.year} QR-koodit</button><button class="btn btn--ghost" type="button" data-act="award-svg-all" data-year="${y.year}">Lataa vuoden ${y.year} SVG:t</button></div>
         <div class="award-list">${y.categories.map((x) => item(x, false)).join('')}</div>
       </details>`).join('')}
     </div>`;
@@ -1753,6 +1827,17 @@ document.addEventListener('click', async (e) => {
     case 'award-png':
       if (qrLib) downloadQrPng(awardUrl(t.dataset.token), t.dataset.name);
       break;
+    case 'award-svg':
+      if (qrLib) downloadQrSvg(awardUrl(t.dataset.token), t.dataset.name);
+      break;
+    case 'award-svg-all': {
+      if (!qrLib) break;
+      const A = state.admin.awards; const y = t.dataset.year;
+      const items = y ? (A.archived.find((x) => String(x.year) === y) || { categories: [] }).categories : A.current;
+      // selain voi kysyä luvan useamman tiedoston lataukseen kerralla
+      items.forEach((x, i) => setTimeout(() => downloadQrSvg(awardUrl(x.token), x.name), i * 400));
+      break;
+    }
     case 'award-print': {
       if (!qrLib) break;
       const A = state.admin.awards; const y = t.dataset.year;
