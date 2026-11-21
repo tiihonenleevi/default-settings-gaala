@@ -24,8 +24,12 @@ if (!ADMIN_CODE || ADMIN_CODE.length < 8) {
 
 const FIXED_CATEGORY = { name: 'Vuoden sykähdyttävin hetki', description: 'Hetki, joka jäi kaikkien mieleen.' };
 // Vaiheet: 1 = kategorioiden ehdottaminen, 2 = äänestys gaalaan pääsevistä kategorioista,
-// 3 = ehdokkaiden ehdottaminen ja äänestys, 4 = finaali, 5 = suljettu
-const PHASES = { 1: 'Kategoriaehdotukset', 2: 'Kategoria-äänestys', 3: 'Ehdokkaat', 4: 'Finaali', 5: 'Suljettu' };
+// 3 = ehdokkaiden ehdottaminen, 4 = ehdokasäänestys (sijat 1.–3. per kategoria), 5 = finaali, 6 = suljettu
+const PHASES = { 1: 'Kategoriaehdotukset', 2: 'Kategoria-äänestys', 3: 'Ehdokasehdotukset', 4: 'Ehdokasäänestys', 5: 'Finaali', 6: 'Suljettu' };
+const LAST_OPEN = 5; // viimeinen vaihe, jossa äänestetään ja lukitaan (6 = suljettu)
+// Ehdokasäänestys: jokainen asettaa kussakin kategoriassa sijat 1.–3.; 1. sija = 3 p, 2. = 2 p, 3. = 1 p
+const RANK_SLOTS = 3;
+const RANK_POINTS = [3, 2, 1];
 
 // ---------- Tietokanta (JSON-tiedosto) ----------
 let db = loadDb();
@@ -37,23 +41,23 @@ function emptyDb() {
       phase: 1,
       deadline: '',
       nextStart: '', // milloin seuraava vaihe alkaa (näkyy odotusnäytöllä); tyhjenee vaiheen vaihtuessa
-      phaseEnds: {}, // vaiheiden 1–4 päättymisajat muodossa "2026-12-04T20:00" (näkyvät vaihepalkissa)
+      phaseEnds: {}, // vaiheiden 1–5 päättymisajat muodossa "2026-12-04T20:00" (näkyvät vaihepalkissa)
       targetCategories: 8, // kategorioita gaalassa (sis. kiinteät); äänestyksellä valitaan tämä − kiinteät
       catVotes: 3, // ääniä per henkilö kategoria-äänestyksessä (vaihe 2)
-      votesP2: 2, // ääniä per kategoria ehdokasvaiheessa (vaihe 3; oma ehdotus vie yhden)
       maxCategoryProposals: 3, // kategoriaehdotuksia per henkilö
       maxNomineeProposals: 2, // ehdokasehdotuksia per henkilö per kategoria
       finalists: 3, // automaattisesti valittavia finalisteja per kategoria
-      phaseScheme: 2, // vaiheiden numerointi (2 = viisi vaihetta)
+      phaseScheme: 3, // vaiheiden numerointi (3 = kuusi vaihetta, ehdokasäänestys omana vaiheenaan)
     },
     users: {},
     categories: [{ id: fixedId, name: FIXED_CATEGORY.name, description: FIXED_CATEGORY.description, fixed: true, advanced: true, by: null, createdAt: now() }],
     catVotes: [],
     nominees: [],
-    nomVotes: [],
+    nomRanks: {}, // ehdokasäänestys (vaihe 4): { userId: { categoryId: [1. sija, 2. sija, 3. sija] } } (tyhjä paikka = null)
+    nomRankAt: {}, // milloin kategorian sijoitusta viimeksi muutettiin: { userId: { categoryId: aikaleima } }
     finalVotes: {},
     finalVoteAt: {}, // milloin finaaliääni annettiin: { userId: { categoryId: aikaleima } }
-    feedback: [], // palautteet: { id, userId, phase, text, createdAt }; phase 1–4 = odotustila lukituksen jälkeen, 5 = suljettu
+    feedback: [], // palautteet: { id, userId, phase, text, createdAt }; phase 1–5 = odotustila lukituksen jälkeen, 6 = suljettu
     // Profiilikuvien versiot: kaikki ehdotetut, adminin lisäämät ja aiemmat kuvat säilyvät, ja admin voi vaihtaa niiden välillä.
     // { id, personId, by, image, crop, source: 'suggestion' | 'admin' | 'previous', withdrawn, createdAt }
     photoSuggestions: [],
@@ -82,6 +86,25 @@ function loadDb() {
     if (st.phase >= 2) st.phase += 1;
     st.phaseScheme = 2;
   }
+  // Viisivaiheinen versio (3 ehdokkaat + äänestys, 4 finaali, 5 suljettu) → kuusi vaihetta: ehdokasäänestys on nyt
+  // oma vaiheensa 4, joten finaali siirtyy vaiheeksi 5 ja suljettu 6:ksi. Vanhan ehdokasvaiheen äänet poistetaan
+  // (ehdotusvaiheessa ei enää äänestetä). Lukitukset, avauspyynnöt, palautteet ja päättymisajat siirtyvät mukana.
+  if (st.phaseScheme === 2) {
+    const shift = (p) => (Number(p) >= 4 ? Number(p) + 1 : Number(p));
+    const shiftKeys = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [shift(k), v]));
+    if (st.phase >= 4) st.phase += 1;
+    st.phaseEnds = shiftKeys(st.phaseEnds);
+    for (const u of Object.values(data.users || {})) {
+      if (u.locked) u.locked = shiftKeys(u.locked);
+      if (u.unlockRequest) u.unlockRequest = shiftKeys(u.unlockRequest);
+    }
+    for (const f of data.feedback || []) f.phase = shift(f.phase || 5);
+    delete st.votesP2;
+    st.phaseScheme = 3;
+  }
+  delete data.nomVotes;
+  data.nomRanks = data.nomRanks || {};
+  data.nomRankAt = data.nomRankAt || {};
   // Kuvaversiot: nykyiset profiilikuvat mukaan versiolistaan, jotta niihin voi palata
   data.photoSuggestions = data.photoSuggestions || [];
   for (const u of Object.values(data.users)) {
@@ -254,25 +277,49 @@ function nomPhoto(n) {
 }
 const userName = (id) => (id && db.users[id] ? db.users[id].name : null);
 
-// Ehdokasvaiheen äänivaatimus: jokaisessa kategoriassa käytettävä kaikki äänet (tai niin monta kuin ehdokkaita on)
-function nomVoteNeed(uid) {
+// Ehdokasäänestyksen sijat: montako sijaa kategoriassa jaetaan (3, tai vähemmän jos ehdokkaita on vähemmän)
+const rankSlots = (catId) => Math.min(RANK_SLOTS, db.nominees.filter((n) => n.categoryId === catId).length);
+// Käyttäjän sijoitus kategoriassa: vain voimassa olevat paikat (1..rankSlots), poistetut ehdokkaat tyhjinä
+function myRanking(uid, catId) {
+  const slots = rankSlots(catId);
+  const ids = new Set(db.nominees.filter((n) => n.categoryId === catId).map((n) => n.id));
+  const arr = ((db.nomRanks[uid] || {})[catId] || []).slice(0, slots).map((id) => (ids.has(id) ? id : null));
+  while (arr.length < slots) arr.push(null);
+  return arr;
+}
+// Ehdokasäänestyksen vaatimus lukitukseen: jokaisessa kategoriassa kaikki sijat jaettu
+function rankNeed(uid) {
   return advancedCats().map((c) => {
-    const ids = new Set(db.nominees.filter((n) => n.categoryId === c.id).map((n) => n.id));
-    const need = Math.min(db.settings.votesP2, ids.size);
-    const have = uid ? db.nomVotes.filter((v) => v.userId === uid && ids.has(v.nomineeId)).length : 0;
+    const need = rankSlots(c.id);
+    const have = uid ? myRanking(uid, c.id).filter(Boolean).length : 0;
     return { cat: c, need, have };
   });
+}
+// Pisteet ja sijajakauma per ehdokas: { nomineeId: { points, places: [1. sijat, 2. sijat, 3. sijat], voters: [{ userId, place }] } }
+function rankScores() {
+  const m = {};
+  for (const [uid, cats] of Object.entries(db.nomRanks || {})) {
+    if (!db.users[uid]) continue;
+    for (const cid of Object.keys(cats)) {
+      myRanking(uid, cid).forEach((nid, i) => {
+        if (!nid) return;
+        const x = (m[nid] = m[nid] || { points: 0, places: [0, 0, 0], voters: [] });
+        x.points += RANK_POINTS[i]; x.places[i] += 1; x.voters.push({ userId: uid, place: i + 1 });
+      });
+    }
+  }
+  return m;
 }
 
 // Voiko osallistuja lukita tämän vaiheen? Sama tarkistus palvelimella ja napissa.
 function lockReady(user) {
   const p = db.settings.phase; const uid = user.id;
   if (p === 2 && !db.catVotes.some((v) => v.userId === uid)) return { ok: false, reason: 'Äänestä vähintään yhtä kategoriaa ennen lukitsemista.' };
-  if (p === 3) {
-    const missing = nomVoteNeed(uid).filter((x) => x.have < x.need);
-    if (missing.length) return { ok: false, reason: `Käytä kaikki äänesi ennen lukitsemista. Ääniä puuttuu: ${missing.map((x) => `${x.cat.name} (${x.have}/${x.need})`).join(', ')}.` };
+  if (p === 4) {
+    const missing = rankNeed(uid).filter((x) => x.have < x.need);
+    if (missing.length) return { ok: false, reason: `Jaa kaikki sijat ennen lukitsemista. Puuttuu: ${missing.map((x) => `${x.cat.name} (${x.have}/${x.need})`).join(', ')}.` };
   }
-  if (p === 4 && !Object.keys(db.finalVotes[uid] || {}).length) return { ok: false, reason: 'Äänestä vähintään yhtä finalistia ennen lukitsemista.' };
+  if (p === 5 && !Object.keys(db.finalVotes[uid] || {}).length) return { ok: false, reason: 'Äänestä vähintään yhtä finalistia ennen lukitsemista.' };
   return { ok: true, reason: '' };
 }
 
@@ -283,14 +330,16 @@ function removeCategory(cat) {
   db.categories = db.categories.filter((c) => c.id !== cat.id);
   db.catVotes = db.catVotes.filter((v) => v.categoryId !== cat.id);
   db.nominees = db.nominees.filter((n) => !nomIds.has(n.id));
-  db.nomVotes = db.nomVotes.filter((v) => !nomIds.has(v.nomineeId));
+  for (const r of Object.values(db.nomRanks)) delete r[cat.id];
+  for (const r of Object.values(db.nomRankAt)) delete r[cat.id];
   for (const fv of Object.values(db.finalVotes)) delete fv[cat.id];
 }
 
 function removeNominee(nom) {
   deleteImage(nom.photo);
   db.nominees = db.nominees.filter((n) => n.id !== nom.id);
-  db.nomVotes = db.nomVotes.filter((v) => v.nomineeId !== nom.id);
+  // Poistetun ehdokkaan sija vapautuu (muut sijat pysyvät paikoillaan)
+  for (const r of Object.values(db.nomRanks)) if (r[nom.categoryId]) r[nom.categoryId] = r[nom.categoryId].map((id) => (id === nom.id ? null : id));
   for (const fv of Object.values(db.finalVotes)) if (fv[nom.categoryId] === nom.id) delete fv[nom.categoryId];
 }
 
@@ -313,14 +362,13 @@ function stateFor(user, opts = {}) {
     deadline: s.deadline,
     nextStart: s.nextStart || '',
     phaseEnds: s.phaseEnds || {},
-    limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, votesP2: s.votesP2, finalists: s.finalists, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
+    limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, rankSlots: RANK_SLOTS, rankPoints: RANK_POINTS, finalists: s.finalists, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
     me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, tester: !!user.tester, locked: user.tester ? false : isLocked(user), unlockRequested: unlockRequested(user), photo: displayPhoto(user) } : null,
   };
   if (!user) return base;
   const uid = user.id;
 
   const myCatVotes = new Set(db.catVotes.filter((v) => v.userId === uid).map((v) => v.categoryId));
-  const myNomVotes = new Set(db.nomVotes.filter((v) => v.userId === uid).map((v) => v.nomineeId));
   const myFinal = db.finalVotes[uid] || {};
 
   const visibleCats = phase <= 2 ? db.categories : advancedCats();
@@ -329,13 +377,15 @@ function stateFor(user, opts = {}) {
     mine: c.by === uid, myVote: myCatVotes.has(c.id),
   }));
 
-  const visibleNoms = phase === 3
+  const visibleNoms = phase === 3 || phase === 4
     ? db.nominees.filter((n) => advancedCats().some((c) => c.id === n.categoryId))
-    : phase >= 4 ? db.nominees.filter((n) => n.finalist) : [];
+    : phase >= 5 ? db.nominees.filter((n) => n.finalist) : [];
   base.nominees = visibleNoms.map((n) => ({
     id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), finalist: !!n.finalist,
-    mine: n.by === uid, myVote: myNomVotes.has(n.id), myFinal: myFinal[n.categoryId] === n.id,
+    mine: n.by === uid, myFinal: myFinal[n.categoryId] === n.id,
   }));
+  // Oma ehdokasäänestys: { categoryId: [1., 2., 3. sija] } (vain gaalaan päässeet kategoriat)
+  base.myRanks = Object.fromEntries(advancedCats().map((c) => [c.id, myRanking(uid, c.id)]));
   base.people = people().map((u) => ({ id: u.id, name: u.name, photo: displayPhoto(u) }));
   // Kuvaversiot: osallistuja näkee omat ehdotuksensa (ei peruttuja), admin kaikki versiot ehdottajineen
   const seen = user.photosSeenAt || '';
@@ -349,8 +399,8 @@ function stateFor(user, opts = {}) {
   if (user.admin) base.photoNew = (db.photoSuggestions || []).filter((x) => db.users[x.personId] && (x.source || 'suggestion') === 'suggestion' && x.by !== uid && !x.withdrawn && x.createdAt > seen).length;
   // Palaute: suljetussa vaiheessa ja jokaisen vaiheen odotustilassa (lukituksen jälkeen). Kukin näkee saman vaiheen
   // palautteet. Muille nimettömänä: kirjoittajaa ei lähetetä selaimeen lainkaan (vain oma-lippu).
-  if (phase === 5 || isLocked(user) || user.tester) {
-    base.feedback = (db.feedback || []).filter((f) => (f.phase || 5) === phase).map((f) => ({ id: f.id, text: f.text, createdAt: f.createdAt, mine: f.userId === uid }));
+  if (phase === 6 || isLocked(user) || user.tester) {
+    base.feedback = (db.feedback || []).filter((f) => (f.phase || 6) === phase).map((f) => ({ id: f.id, text: f.text, createdAt: f.createdAt, mine: f.userId === uid }));
   }
 
   base.used = {
@@ -391,32 +441,37 @@ function winnersFor(categoryIds) {
 
 function adminView() {
   const catCounts = countBy(db.catVotes, 'categoryId');
-  const nomCounts = countBy(db.nomVotes, 'nomineeId');
+  const scores = rankScores();
   const fin = finalCounts();
+  const showVoters = db.settings.phase >= 4;
   return {
     participants: Object.values(db.users).filter((u) => !u.root).map((u) => ({
       id: u.id, name: u.name, code: fmtCode(u.code), admin: !!u.admin, joined: !!u.lastLogin, photo: photoOf(u.photo, u.photoCrop), safePhoto: photoOf(u.safePhoto, u.safePhotoCrop), shownPhoto: displayPhoto(u), nominable: u.nominable !== false, tester: !!u.tester,
       p1: db.categories.filter((c) => c.by === u.id).length,
       p2: db.catVotes.filter((v) => v.userId === u.id).length,
-      p3: db.nomVotes.filter((v) => v.userId === u.id).length,
-      p4: Object.keys(db.finalVotes[u.id] || {}).length,
+      p3: db.nominees.filter((n) => n.by === u.id).length,
+      p4: rankNeed(u.id).filter((x) => x.need > 0 && x.have >= x.need).length,
+      p5: Object.keys(db.finalVotes[u.id] || {}).length,
       locked: isLocked(u), unlockRequested: unlockRequested(u),
     })).sort((a, b) => a.name.localeCompare(b.name, 'fi')),
     categories: db.categories.map((c) => ({ id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, votes: catCounts[c.id] || 0, byName: userName(c.by) })),
-    nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), ownPhoto: !!n.photo, finalist: !!n.finalist, votes: nomCounts[n.id] || 0, finalVotes: fin[n.id] || 0, byName: userName(n.by),
-      finalVoters: db.settings.phase >= 4 ? Object.entries(db.finalVotes).filter(([, v]) => v[n.categoryId] === n.id).map(([uid]) => userName(uid) || 'poistettu').sort((a, b) => a.localeCompare(b, 'fi')) : [] })),
+    nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), ownPhoto: !!n.photo, finalist: !!n.finalist,
+      points: (scores[n.id] || {}).points || 0, places: (scores[n.id] || {}).places || [0, 0, 0],
+      rankVoters: showVoters && scores[n.id] ? scores[n.id].voters.map((x) => ({ name: userName(x.userId), place: x.place })).sort((a, b) => a.place - b.place || a.name.localeCompare(b.name, 'fi')) : [],
+      finalVotes: fin[n.id] || 0, byName: userName(n.by),
+      finalVoters: db.settings.phase >= 5 ? Object.entries(db.finalVotes).filter(([, v]) => v[n.categoryId] === n.id).map(([uid]) => userName(uid) || 'poistettu').sort((a, b) => a.localeCompare(b, 'fi')) : [] })),
     safeMode: !!db.settings.safeMode,
     hofPublished: !!db.settings.hofPublished,
     awards: awardsAdmin(),
     // Discord-ilmoitukset: osoitetta ei koskaan lähetetä selaimeen, vain tieto siitä, onko se asetettu
     notify: { set: !!webhookUrl(), fromEnv: !db.settings.discordWebhook && !!process.env.DISCORD_WEBHOOK, kinds: Object.fromEntries(Object.keys(NOTIFY_KINDS).map((k) => [k, notifyOn(k)])), reminderTime: reminderTime() },
     bulletin: { set: !!db.settings.publicWebhook, roleId: db.settings.publicRoleId || '', time: bulletinTime(), lastSent: db.settings.bulletinLastSent || '' },
-    nomVoteNeed: nomVoteNeed(null).reduce((sum, x) => sum + x.need, 0),
-    voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nomVotes.map((v) => v.userId)).size, p4: Object.keys(db.finalVotes).length },
+    rankCats: rankNeed(null).filter((x) => x.need > 0).length,
+    voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nominees.filter((n) => n.by).map((n) => n.by)).size, p4: Object.keys(db.nomRanks).filter((uid) => db.users[uid] && advancedCats().some((c) => myRanking(uid, c.id).some(Boolean))).length, p5: Object.keys(db.finalVotes).length },
     locked: Object.values(db.users).filter((u) => !u.root && !u.tester && isLocked(u)).length,
     winners: winnersFor(advancedCats().map((c) => c.id)),
     // Palauteloki: vain adminit näkevät kirjoittajan
-    feedbackLog: (db.feedback || []).map((f) => ({ id: f.id, phase: f.phase || 5, name: userName(f.userId) || 'Poistettu osallistuja', text: f.text, createdAt: f.createdAt })),
+    feedbackLog: (db.feedback || []).map((f) => ({ id: f.id, phase: f.phase || 6, name: userName(f.userId) || 'Poistettu osallistuja', text: f.text, createdAt: f.createdAt })),
   };
 }
 
@@ -586,39 +641,21 @@ route('POST', '/api/nominees', ({ user, body }) => {
   if (!person || person.root || person.nominable === false) fail(404, 'Valitse ehdokas korteista.');
   const reason = clean(body.reason, 160);
   if (reason.length < 3) fail(400, 'Kirjoita myös mistä ehdotat – sama henkilö voi olla ehdolla useammasta aiheesta.');
-  if (db.nominees.some((n) => n.categoryId === cat.id && n.personId === person.id && norm(n.reason) === norm(reason))) fail(409, 'Sama ehdotus on jo listalla – äänestä sitä.');
+  if (db.nominees.some((n) => n.categoryId === cat.id && n.personId === person.id && norm(n.reason) === norm(reason))) fail(409, 'Sama ehdotus on jo listalla.');
   const mine = db.nominees.filter((n) => n.categoryId === cat.id && n.by === user.id).length;
   if (mine >= db.settings.maxNomineeProposals) fail(400, `Voit ehdottaa enintään ${db.settings.maxNomineeProposals} ehdokasta per kategoria.`);
-  // Ehdotus ei anna ääntä: osallistuja äänestää erikseen
   db.nominees.push({ id: newId(), categoryId: cat.id, personId: person.id, name: person.name, reason, photo: null, finalist: false, by: user.id, createdAt: now() });
   writeDb();
   return stateFor(user);
 });
 
-// Osallistuja poistaa oman ehdokasehdotuksensa (vaihe 3, ennen lukitusta). Myös muiden äänet sille poistuvat.
+// Osallistuja poistaa oman ehdokasehdotuksensa (vaihe 3, ennen lukitusta)
 route('DELETE', '/api/nominees/:id', ({ user, params }) => {
   requirePhase(3);
   requireVoter(user);
   requireUnlocked(user);
   const nom = db.nominees.find((n) => n.id === params.id && n.by === user.id) || fail(404, 'Voit poistaa vain omia ehdotuksiasi.');
   removeNominee(nom);
-  writeDb();
-  return stateFor(user);
-});
-
-route('POST', '/api/nominees/:id/vote', ({ user, params }) => {
-  requirePhase(3);
-  requireVoter(user);
-  requireUnlocked(user);
-  const nom = db.nominees.find((n) => n.id === params.id) || fail(404, 'Ehdokasta ei löydy.');
-  const i = db.nomVotes.findIndex((v) => v.userId === user.id && v.nomineeId === nom.id);
-  if (i >= 0) db.nomVotes.splice(i, 1);
-  else {
-    const inCat = new Set(db.nominees.filter((n) => n.categoryId === nom.categoryId).map((n) => n.id));
-    const used = db.nomVotes.filter((v) => v.userId === user.id && inCat.has(v.nomineeId)).length;
-    if (used >= db.settings.votesP2) fail(400, `Sinulla on ${db.settings.votesP2} ääntä per kategoria. Poista ääni ensin toiselta ehdokkaalta.`);
-    db.nomVotes.push({ userId: user.id, nomineeId: nom.id, at: now() });
-  }
   writeDb();
   return stateFor(user);
 });
@@ -634,9 +671,34 @@ route('POST', '/api/nominees/:id/edit', ({ user, params, body }) => {
   return stateFor(user);
 });
 
-// Vaihe 4: finaali
-route('POST', '/api/final', ({ user, body }) => {
+// Vaihe 4: ehdokasäänestys. Osallistuja asettaa ehdokkaan sijalle 1.–3. (place 0 = poista sijalta).
+// Jos sijalla on jo joku, he vaihtavat paikkaa (edellinen siirtyy valitun ehdokkaan vanhalle sijalle tai pois).
+route('POST', '/api/ranks', ({ user, body }) => {
   requirePhase(4);
+  requireVoter(user);
+  requireUnlocked(user);
+  const nom = db.nominees.find((n) => n.id === body.nomineeId && advancedCats().some((c) => c.id === n.categoryId)) || fail(404, 'Ehdokasta ei löydy.');
+  const cid = nom.categoryId;
+  const slots = rankSlots(cid);
+  const place = Math.round(Number(body.place));
+  if (!(place >= 0 && place <= slots)) fail(400, `Sijan pitää olla 1–${slots}.`);
+  const arr = myRanking(user.id, cid);
+  const from = arr.indexOf(nom.id);
+  if (from >= 0) arr[from] = null;
+  if (place > 0) {
+    const prev = arr[place - 1];
+    if (prev && from >= 0) arr[from] = prev; // vaihdetaan paikkoja
+    arr[place - 1] = nom.id;
+  }
+  db.nomRanks[user.id] = { ...(db.nomRanks[user.id] || {}), [cid]: arr };
+  db.nomRankAt[user.id] = { ...(db.nomRankAt[user.id] || {}), [cid]: now() };
+  writeDb();
+  return stateFor(user);
+});
+
+// Vaihe 5: finaali
+route('POST', '/api/final', ({ user, body }) => {
+  requirePhase(5);
   requireVoter(user);
   requireUnlocked(user);
   const nom = db.nominees.find((n) => n.id === body.nomineeId && n.finalist) || fail(404, 'Finalistia ei löydy.');
@@ -651,7 +713,7 @@ route('POST', '/api/final', ({ user, body }) => {
 // Lukituksen jälkeen vaiheen ääniä ja ehdotuksia ei voi muuttaa; järjestäjä voi avata lukon hallinnasta.
 route('POST', '/api/lock', ({ user }) => {
   requireVoter(user);
-  if (db.settings.phase > 4) fail(409, 'Äänestys on jo suljettu.');
+  if (db.settings.phase > LAST_OPEN) fail(409, 'Äänestys on jo suljettu.');
   requireUnlocked(user);
   const ready = lockReady(user);
   if (!ready.ok) fail(400, ready.reason);
@@ -670,7 +732,7 @@ function unlockRequested(user) {
 route('POST', '/api/unlock-request', ({ user }) => {
   requireVoter(user);
   const ph = db.settings.phase;
-  if (ph > 4) fail(409, 'Äänestys on jo suljettu.');
+  if (ph > LAST_OPEN) fail(409, 'Äänestys on jo suljettu.');
   if (!isLocked(user)) fail(409, 'Vastauksesi eivät ole lukossa.');
   const prev = user.unlockRequest && user.unlockRequest[ph];
   user.unlockRequest = { ...(user.unlockRequest || {}), [ph]: now() };
@@ -686,14 +748,14 @@ route('POST', '/api/unlock-request', ({ user }) => {
 route('POST', '/api/feedback', ({ user, body }) => {
   requireVoter(user);
   const phase = db.settings.phase;
-  if (phase !== 5 && !isLocked(user)) fail(409, 'Palautteen voi lähettää, kun olet lukinnut vastauksesi.');
+  if (phase !== 6 && !isLocked(user)) fail(409, 'Palautteen voi lähettää, kun olet lukinnut vastauksesi.');
   const text = String(body.text ?? '').replace(/\r\n?/g, '\n').trim().slice(0, 1000);
   if (text.length < 2) fail(400, 'Kirjoita palaute ensin.');
   db.feedback = db.feedback || [];
-  if (db.feedback.filter((f) => f.userId === user.id && (f.phase || 5) === phase).length >= 20) fail(400, 'Olet jo lähettänyt paljon palautetta.');
+  if (db.feedback.filter((f) => f.userId === user.id && (f.phase || 6) === phase).length >= 20) fail(400, 'Olet jo lähettänyt paljon palautetta.');
   db.feedback.push({ id: newId(), userId: user.id, phase, text, createdAt: now() });
   writeDb();
-  notify('feedback', `💬 **Palaute** (${phase === 5 ? 'Gaalan jälkeen' : `odotustila, vaihe ${phase}`}) · ${user.name}:\n${quote(text)}`);
+  notify('feedback', `💬 **Palaute** (${phase === 6 ? 'Gaalan jälkeen' : `odotustila, vaihe ${phase}`}) · ${user.name}:\n${quote(text)}`);
   return { ...stateFor(user), notice: 'Palaute lähetetty.' };
 });
 
@@ -794,7 +856,7 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
   const backup = `db-ennen-nollausta-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   fs.copyFileSync(DB_FILE, path.join(DATA_DIR, backup));
   db.categories = db.categories.filter((c) => c.fixed).map((c) => ({ ...c, advanced: true }));
-  db.catVotes = []; db.nominees = []; db.nomVotes = [];
+  db.catVotes = []; db.nominees = []; db.nomRanks = {}; db.nomRankAt = {};
   db.finalVotes = {}; db.finalVoteAt = {}; db.feedback = [];
   db.settings.phase = 1; db.settings.deadline = ''; db.settings.nextStart = ''; db.settings.phaseEnds = {};
   for (const u of Object.values(db.users)) { u.locked = {}; u.unlockRequest = {}; }
@@ -880,7 +942,7 @@ function copyCardPhoto(n) {
 // Tämän vuoden tulokset Hall of Fameen: gaalaan päässeet kategoriat, finalistit ja voittajat (tasapelissä kaikki).
 // Ehdokaskorttien omat kuvat kopioidaan; profiilikuvia ei käytetä (puuttuvat kuvat lisätään muokkauslomakkeella).
 route('POST', '/api/admin/hof/archive', ({ user, body }) => {
-  if (db.settings.phase !== 5) fail(409, 'Tulokset voi arkistoida, kun äänestys on suljettu (vaihe 5).');
+  if (db.settings.phase !== 6) fail(409, 'Tulokset voi arkistoida, kun äänestys on suljettu (vaihe 6).');
   const year = cleanYear(body.year);
   db.hallOfFame = db.hallOfFame || [];
   if (db.hallOfFame.some((y) => y.year === year)) fail(409, `Vuosi ${year} on jo Hall of Famessa. Poista tai muokkaa sitä ensin.`);
@@ -1008,9 +1070,9 @@ route('GET', '/api/admin/users/:id/stats', ({ params }) => {
     categories: db.categories.filter((c) => c.by === u.id).map((c) => ({ name: c.name, description: c.description, at: c.createdAt, editedAt: c.editedAt || null, advanced: !!c.advanced })),
     catVotes: db.catVotes.filter((v) => v.userId === u.id).map((v) => ({ name: catName(v.categoryId), at: v.at || null })),
     nominees: db.nominees.filter((n) => n.by === u.id).map((n) => ({ category: catName(n.categoryId), name: nomName(n), reason: n.reason, at: n.createdAt, editedAt: n.editedAt || null, finalist: !!n.finalist })),
-    nomVotes: db.nomVotes.filter((v) => v.userId === u.id && nom(v.nomineeId)).map((v) => { const n = nom(v.nomineeId); return { category: catName(n.categoryId), name: nomName(n), reason: n.reason, at: v.at || null }; }),
+    ranks: Object.keys(db.nomRanks[u.id] || {}).filter((cid) => cat(cid)).flatMap((cid) => myRanking(u.id, cid).map((nid, i) => (nid ? { category: catName(cid), place: i + 1, name: nomName(nom(nid)), reason: nom(nid).reason, at: ((db.nomRankAt || {})[u.id] || {})[cid] || null } : null)).filter(Boolean)),
     finals: Object.entries(fin).filter(([, nid]) => nom(nid)).map(([cid, nid]) => ({ category: catName(cid), name: nomName(nom(nid)), reason: nom(nid).reason, at: finAt[cid] || null })),
-    feedback: (db.feedback || []).filter((f) => f.userId === u.id).map((f) => ({ text: f.text, at: f.createdAt, phase: f.phase || 5 })),
+    feedback: (db.feedback || []).filter((f) => f.userId === u.id).map((f) => ({ text: f.text, at: f.createdAt, phase: f.phase || 6 })),
   };
 }, { admin: true });
 
@@ -1023,7 +1085,8 @@ route('DELETE', '/api/admin/users/:id', ({ user, params }) => {
   db.photoSuggestions = (db.photoSuggestions || []).filter((y) => y.personId !== u.id);
   delete db.users[u.id];
   db.catVotes = db.catVotes.filter((v) => v.userId !== u.id);
-  db.nomVotes = db.nomVotes.filter((v) => v.userId !== u.id);
+  delete db.nomRanks[u.id];
+  if (db.nomRankAt) delete db.nomRankAt[u.id];
   delete db.finalVotes[u.id];
   if (db.finalVoteAt) delete db.finalVoteAt[u.id];
   writeDb();
@@ -1035,7 +1098,11 @@ route('POST', '/api/admin/phase', ({ user, body }) => {
   if (!PHASES[phase]) fail(400, 'Tuntematon vaihe.');
   // Kiinteä kategoria on aina mukana, joten tarkistetaan vain äänestyksellä valittavat
   if (phase >= 3 && !advancedCats().some((c) => !c.fixed)) fail(400, 'Valitse ensin jatkoon pääsevät kategoriat.');
-  if (phase >= 4) {
+  if (phase >= 4 && phase <= LAST_OPEN) {
+    const empty = advancedCats().filter((c) => !db.nominees.some((n) => n.categoryId === c.id));
+    if (phase === 4 && empty.length) fail(400, `Näissä kategorioissa ei ole vielä ehdokkaita: ${empty.map((c) => c.name).join(', ')}.`);
+  }
+  if (phase >= 5) {
     const missing = advancedCats().filter((c) => !db.nominees.some((n) => n.categoryId === c.id && n.finalist));
     if (missing.length) fail(400, `Valitse finalistit myös näihin: ${missing.map((c) => c.name).join(', ')}.`);
   }
@@ -1044,7 +1111,7 @@ route('POST', '/api/admin/phase', ({ user, body }) => {
   db.settings.phase = phase;
   writeDb();
   if (changed) {
-    const end = phase <= 4 && db.settings.phaseEnds && db.settings.phaseEnds[phase];
+    const end = phase <= LAST_OPEN && db.settings.phaseEnds && db.settings.phaseEnds[phase];
     notify('phases', `📣 **Vaihe ${phase} avattu: ${PHASES[phase]}** (${user.name})${end ? ` · päättyy ${fmtWall(end)}` : ''}`);
   }
   return stateFor(user);
@@ -1064,7 +1131,7 @@ route('POST', '/api/admin/settings', ({ user, body }) => {
   }
   if (body.phaseEnds && typeof body.phaseEnds === 'object') {
     const ends = {};
-    for (const p of [1, 2, 3, 4]) {
+    for (const p of [1, 2, 3, 4, 5]) {
       const v = String(body.phaseEnds[p] ?? '').trim();
       if (!v) continue;
       if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v) || Number.isNaN(Date.parse(v))) fail(400, `Vaiheen ${p} päättymisaika on virheellinen.`);
@@ -1072,7 +1139,7 @@ route('POST', '/api/admin/settings', ({ user, body }) => {
     }
     s.phaseEnds = ends;
   }
-  for (const k of ['targetCategories', 'catVotes', 'votesP2', 'maxCategoryProposals', 'maxNomineeProposals', 'finalists']) {
+  for (const k of ['targetCategories', 'catVotes', 'maxCategoryProposals', 'maxNomineeProposals', 'finalists']) {
     if (k in body) {
       const n = Math.round(Number(body[k]));
       if (!(n >= 1 && n <= 50)) fail(400, 'Lukujen pitää olla välillä 1–50.');
@@ -1112,22 +1179,25 @@ route('DELETE', '/api/admin/categories/:id', ({ user, params }) => {
   return stateFor(user);
 }, { admin: true });
 
-// Valitse jokaiseen kategoriaan N eniten ääniä saanutta finalistiksi (N = asetus finalists)
+// Valitse jokaiseen kategoriaan N eniten pisteitä saanutta finalistiksi (N = asetus finalists).
+// Pisteet ehdokasäänestyksestä (1. sija 3 p, 2. sija 2 p, 3. sija 1 p). Tasapisteissä ratkaisee enemmän
+// 1. sijoja, sitten 2. sijoja; jos sekin on tasan, aiemmin ehdotettu ensin ja admin saa varoituksen.
 route('POST', '/api/admin/nominees/auto-finalists', ({ user }) => {
-  const counts = countBy(db.nomVotes, 'nomineeId');
+  const scores = rankScores();
+  const key = (x) => { const s = scores[x.id] || { points: 0, places: [0, 0, 0] }; return [s.points, ...s.places]; };
+  const cmp = (a, b) => { const ka = key(a), kb = key(b); for (let i = 0; i < ka.length; i++) if (kb[i] !== ka[i]) return kb[i] - ka[i]; return 0; };
   const n = db.settings.finalists; const ties = [];
   for (const c of advancedCats()) {
     const ranked = db.nominees.filter((x) => x.categoryId === c.id)
-      .sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0) || a.createdAt.localeCompare(b.createdAt));
+      .sort((a, b) => cmp(a, b) || a.createdAt.localeCompare(b.createdAt));
     ranked.forEach((x, i) => {
       x.finalist = i < n;
       if (!x.finalist) for (const fv of Object.values(db.finalVotes)) if (fv[c.id] === x.id) delete fv[c.id];
     });
-    const cutoff = counts[ranked[n - 1]?.id] || 0;
-    if (ranked.length > n && cutoff > 0 && (counts[ranked[n]?.id] || 0) === cutoff) ties.push(c.name);
+    if (ranked.length > n && key(ranked[n - 1])[0] > 0 && cmp(ranked[n - 1], ranked[n]) === 0) ties.push(c.name);
   }
   writeDb();
-  return { ...stateFor(user), notice: ties.length ? `Valittu ${n} eniten ääniä saanutta per kategoria. Tasapeli viimeisellä paikalla: ${ties.join(', ')} – tarkista.` : `Valittu ${n} eniten ääniä saanutta per kategoria.` };
+  return { ...stateFor(user), notice: ties.length ? `Valittu ${n} eniten pisteitä saanutta per kategoria. Täysi tasapeli viimeisellä paikalla: ${ties.join(', ')} – tarkista.` : `Valittu ${n} eniten pisteitä saanutta per kategoria.` };
 }, { admin: true });
 
 route('POST', '/api/admin/nominees/:id', ({ user, params, body }) => {
@@ -1426,7 +1496,7 @@ function notifyLock(user) {
 // joten samaa muistutusta ei lähetetä kahdesti, vaikka palvelin käynnistyisi uudelleen.
 function reminderTick() {
   const ph = db.settings.phase;
-  if (!webhookUrl() || !notifyOn('reminders') || ph < 1 || ph > 4) return;
+  if (!webhookUrl() || !notifyOn('reminders') || ph < 1 || ph > LAST_OPEN) return;
   const sent = (db.notifySent = db.notifySent || {});
   let dirty = false;
   const mark = (key) => { if (sent[key]) return false; sent[key] = now(); dirty = true; return true; };
@@ -1474,12 +1544,12 @@ setInterval(safeTick, 60 * 1000).unref();
 // lyönyt vaiheen lukkoon ja paljonko aikaa vaiheen loppuun on. Rooli (esim. @Gaala-jäsenet) pingataan vain, jos
 // sen ID on asetettu. Mukana ei ole nimiä: lukitsemattomien nimet menevät vain adminien kanavalle.
 function bulletinTime() { return db.settings.bulletinTime ?? '12:00'; }
-const PHASE_EN = { 1: 'Category Suggestions', 2: 'Category Voting', 3: 'Nominees', 4: 'Final' };
-const PHASE_IN_FI = { 1: 'kategorioiden ehdotusvaiheessa', 2: 'kategorioiden äänestysvaiheessa', 3: 'ehdokasvaiheessa', 4: 'finaalivaiheessa' };
-const PHASE_NOM_FI = { 1: 'kategorioiden ehdotusvaihe', 2: 'kategorioiden äänestysvaihe', 3: 'ehdokasvaihe', 4: 'finaalivaihe' };
+const PHASE_EN = { 1: 'Category Suggestions', 2: 'Category Voting', 3: 'Nominee Suggestions', 4: 'Nominee Voting', 5: 'Final' };
+const PHASE_IN_FI = { 1: 'kategorioiden ehdotusvaiheessa', 2: 'kategorioiden äänestysvaiheessa', 3: 'ehdokkaiden ehdotusvaiheessa', 4: 'ehdokkaiden äänestysvaiheessa', 5: 'finaalivaiheessa' };
+const PHASE_NOM_FI = { 1: 'kategorioiden ehdotusvaihe', 2: 'kategorioiden äänestysvaihe', 3: 'ehdokkaiden ehdotusvaihe', 4: 'ehdokkaiden äänestysvaihe', 5: 'finaalivaihe' };
 const PHASE_WHAT = { // mitä lyödään lukkoon: [suomeksi, englanniksi]
   1: ['kategoriaehdotuksensa', 'category suggestions'], 2: ['kategoriaäänensä', 'category votes'],
-  3: ['ehdokasäänensä', 'nominee votes'], 4: ['finaaliäänensä', 'final votes'],
+  3: ['ehdokasehdotuksensa', 'nominee suggestions'], 4: ['ehdokasäänensä', 'nominee rankings'], 5: ['finaaliäänensä', 'final votes'],
 };
 const WD_FI = ['sunnuntaina', 'maanantaina', 'tiistaina', 'keskiviikkona', 'torstaina', 'perjantaina', 'lauantaina'];
 const WD_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -1504,7 +1574,7 @@ function bulletinWhen(end) {
 
 function bulletinText() {
   const ph = db.settings.phase;
-  if (ph < 1 || ph > 4) return null;
+  if (ph < 1 || ph > LAST_OPEN) return null;
   const total = voters().length; const missing = unlockedVoters(ph).length; const locked = total - missing;
   const role = db.settings.publicRoleId ? `<@&${db.settings.publicRoleId}>` : 'Gaala-jäsenet';
   const [whatFi, whatEn] = PHASE_WHAT[ph];
@@ -1542,7 +1612,7 @@ async function sendBulletin() {
 
 function bulletinTick() {
   const ph = db.settings.phase; const time = bulletinTime();
-  if (!db.settings.publicWebhook || !time || ph < 1 || ph > 4) return;
+  if (!db.settings.publicWebhook || !time || ph < 1 || ph > LAST_OPEN) return;
   const t = tzNow();
   if (t.time < time) return;
   const sent = (db.notifySent = db.notifySent || {});
@@ -1613,7 +1683,7 @@ route('POST', '/api/admin/notify-test', async ({ user }) => {
   const ph = db.settings.phase; const missing = unlockedVoters(ph);
   let r;
   try {
-    r = await postDiscord(`👋 **Testiviesti HerrasmiesKlubi Gaalasta** (${user.name})\nVaihe ${ph} · ${PHASES[ph]}${ph <= 4 ? ` · ${voters().length - missing.length}/${voters().length} lukinnut` : ''}`);
+    r = await postDiscord(`👋 **Testiviesti HerrasmiesKlubi Gaalasta** (${user.name})\nVaihe ${ph} · ${PHASES[ph]}${ph <= LAST_OPEN ? ` · ${voters().length - missing.length}/${voters().length} lukinnut` : ''}`);
   } catch (e) {
     fail(502, `Discordiin ei saatu yhteyttä: ${(e && e.message) || e}`);
   }

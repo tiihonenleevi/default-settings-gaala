@@ -595,7 +595,7 @@ function hofAdmin() {
   return `
   <div class="admin hof-admin">
     <header class="cat-head"><p class="eyebrow">Vain järjestäjille</p><h2 class="h2">Hall of Famen hallinta</h2></header>
-    ${s.realPhase === 5 && !archived ? `<div class="panel">
+    ${s.realPhase === 6 && !archived ? `<div class="panel">
       <p class="eyebrow">Tämän vuoden tulokset</p>
       <p style="margin:0">Äänestys on suljettu. Lisää vuoden ${thisYear} finalistit ja voittajat Hall of Fameen. Tee tämä ennen kuin nollaat Gaalan ensi vuotta varten.</p>
       <div><button class="btn btn--primary btn--sm" data-act="hof-archive" data-year="${thisYear}">Lisää Gaala ${thisYear} Hall of Fameen</button></div>
@@ -802,14 +802,16 @@ function meCardView() {
   </div>`;
 }
 
+const STEP_NAMES = ['Ehdotukset', 'Kategoriat', 'Ehdokkaat', 'Top 3', 'Finaali', 'Suljettu'];
+const LAST_OPEN = 5; // viimeinen vaihe, jossa äänestetään (6 = suljettu)
 function stepper() {
-  const names = ['Ehdotukset', 'Kategoriat', 'Ehdokkaat', 'Finaali', 'Suljettu'];
+  const names = STEP_NAMES;
   return `<ol class="stepper">${names.map((n, i) => {
     const p = i + 1; const cls = p < state.phase ? 'done' : p === state.phase ? 'now' : '';
-    const end = p < 5 && state.phaseEnds && state.phaseEnds[p];
+    const end = p <= LAST_OPEN && state.phaseEnds && state.phaseEnds[p];
     // Päättymisaika näkyy vaiheiden välisellä viivalla (puhelimessa nimen alla)
     const endTxt = end ? `<span class="step-end">${p < state.phase ? 'päättyi' : 'päättyy'} <time datetime="${esc(end)}">${fmtEndParts(end)}</time></span>` : '';
-    return `<li class="${cls}${end ? ' has-end' : ''}" ${p === state.phase ? 'aria-current="step"' : ''}>${p < 5 ? 'Vaihe ' + p : 'Lopuksi'}<b>${n}</b>${endTxt}</li>`;
+    return `<li class="${cls}${end ? ' has-end' : ''}" ${p === state.phase ? 'aria-current="step"' : ''}>${p <= LAST_OPEN ? 'Vaihe ' + p : 'Lopuksi'}<b>${n}</b>${endTxt}</li>`;
   }).join('')}</ol>`;
 }
 
@@ -843,7 +845,7 @@ function phaseHero() {
   const s = state; const L = s.limits;
   if (s.phase === 1) {
     return `<div class="hero-head">
-      <p class="eyebrow">Vaihe 1 / 4 · Kategoriaehdotukset</p>
+      <p class="eyebrow">Vaihe 1 / 5 · Kategoriaehdotukset</p>
       <h1 class="h1">Mistä palkintoja jaetaan?</h1>
       <p class="lead">Ehdota kategorioita, joista Gaalassa voisi jakaa palkinnon. Voit ehdottaa enintään ${L.maxCategoryProposals} kategoriaa. Ehdotukset eivät ole ääniä: seuraavassa vaiheessa kaikki äänestävät, mitkä kategoriat pääsevät Gaalaan.</p>
     </div>
@@ -851,7 +853,7 @@ function phaseHero() {
   }
   if (s.phase === 2) {
     return `<div class="hero-head">
-      <p class="eyebrow">Vaihe 2 / 4 · Kategoria-äänestys</p>
+      <p class="eyebrow">Vaihe 2 / 5 · Kategoria-äänestys</p>
       <h1 class="h1">Mitkä kategoriat Gaalaan?</h1>
       <p class="lead">Gaalassa jaetaan ${L.targetCategories} palkintoa. ”Vuoden sykähdyttävin hetki” on mukana joka tapauksessa, ja loput ${L.advanceCount} valitaan äänestämällä. Sinulla on ${L.catVotes} ääntä, enintään yksi per kategoria.</p>
       <p class="notice"><b>Äänestä vähintään yhtä kategoriaa</b> ennen kuin lukitset vastauksesi.</p>
@@ -859,18 +861,30 @@ function phaseHero() {
     <div class="meta-row"><span class="meter">${pips(s.used.catVotes, L.catVotes)} Ääniä käytetty ${s.used.catVotes} / ${L.catVotes}</span>${deadline()}</div>`;
   }
   if (s.phase === 3) {
+    const mine = s.nominees.filter((n) => n.mine).length;
     return `<div class="hero-head">
-      <p class="eyebrow">Vaihe 3 / 4 · Ehdokkaat</p>
+      <p class="eyebrow">Vaihe 3 / 5 · Ehdokasehdotukset</p>
       <h1 class="h1">Keitä palkitaan?</h1>
       <p class="lead">Kategoriat on valittu. Ehdota henkilöitä valitsemalla kortti ja kirjoittamalla mistä (enintään ${L.maxNomineeProposals} per kategoria). Saman henkilön voi ehdottaa useammasta eri aiheesta.</p>
-      <p class="notice"><b>Muista myös äänestää.</b> Ehdottaminen ei anna ääntä. Sinulla on ${L.votesP2} ääntä jokaisessa kategoriassa, ja ne kaikki pitää käyttää ennen lukitsemista.</p>
+      <p class="notice">Tässä vaiheessa vain ehdotetaan. <b>Äänestys on seuraava vaihe:</b> silloin jokainen valitsee kustakin kategoriasta oman top 3:nsa, ja eniten pisteitä saaneet pääsevät finaaliin.</p>
     </div>
-    <div class="meta-row">${deadline()}</div>`;
+    <div class="meta-row"><span class="meter">Ehdotuksiasi yhteensä ${mine}</span>${deadline()}</div>`;
   }
   if (s.phase === 4) {
+    const need = rankProgress(); const done = need.filter((x) => x.have >= x.need).length;
+    const [p1, p2, p3] = L.rankPoints || [3, 2, 1];
+    return `<div class="hero-head">
+      <p class="eyebrow">Vaihe 4 / 5 · Ehdokasäänestys</p>
+      <h1 class="h1">Kuka finaaliin?</h1>
+      <p class="lead">Valitse jokaisesta kategoriasta oma top 3:si: 1. sija saa ${p1} pistettä, 2. sija ${p2} ja 3. sija ${p3}. Kunkin kategorian ${L.finalists} eniten pisteitä saanutta pääsevät finaaliin.</p>
+      <p class="notice"><b>Jaa kaikki sijat jokaisessa kategoriassa</b> ennen kuin lukitset vastauksesi.</p>
+    </div>
+    <div class="meta-row"><span class="meter">${pips(done, need.length)} Valmiina ${done} / ${need.length} kategoriaa</span>${deadline()}</div>`;
+  }
+  if (s.phase === 5) {
     const cats = s.categories; const done = cats.filter((c) => s.nominees.some((n) => n.categoryId === c.id && n.myFinal)).length;
     return `<div class="hero-head">
-      <p class="eyebrow">Vaihe 4 / 4 · Finaali</p>
+      <p class="eyebrow">Vaihe 5 / 5 · Finaali</p>
       <h1 class="h1">Valitse voittajat</h1>
       <p class="lead">Valitse kortti jokaisesta kategoriasta – yksi ääni per kategoria. Voit vaihtaa valintaasi, kunnes lukitset vastauksesi. Lukitseminen vaatii vähintään yhden äänen.</p>
     </div>
@@ -885,7 +899,7 @@ function phaseHero() {
 
 // Osallistuja on lukinnut tämän vaiheen, eikä seuraava ole vielä alkanut
 function isWaiting() {
-  return !!(state.me && !state.me.root && state.me.locked && state.phase <= 4);
+  return !!(state.me && !state.me.root && state.me.locked && state.phase <= LAST_OPEN);
 }
 
 function phaseBody() {
@@ -893,7 +907,8 @@ function phaseBody() {
   if (state.phase === 1) return phaseProposals() + lockBar();
   if (state.phase === 2) return phaseCategoryVote() + lockBar();
   if (state.phase === 3) return phaseNominees() + lockBar();
-  if (state.phase === 4) return phaseFinal() + lockBar();
+  if (state.phase === 4) return phaseRanking() + lockBar();
+  if (state.phase === 5) return phaseFinal() + lockBar();
   return feedbackView();
 }
 
@@ -901,12 +916,12 @@ function phaseBody() {
 // Testikäyttäjä voi hypätä mihin tahansa vaiheeseen ja kokeilla kaikkea. Toiminnot tehdään vain tässä
 // selaimessa (simulate), eikä palvelin tallenna mitään (palvelin myös hylkää testikäyttäjän muutokset).
 function testBar() {
-  const names = ['Ehdotukset', 'Kategoriat', 'Ehdokkaat', 'Finaali', 'Suljettu'];
+  const names = STEP_NAMES;
   return `
   <div class="test-bar"><div class="wrap">
     <div class="test-info"><span class="tag tag--red">Testitila</span><span class="small">Muutoksia ei tallenneta · oikea vaihe ${state.realPhase}</span></div>
     <div class="test-phases">${names.map((n, i) => `<button class="btn btn--sm ${i + 1 === state.phase && !state.me.locked ? 'btn--primary' : 'btn--secondary'}" data-act="test-phase" data-phase="${i + 1}">${i + 1}. ${n}</button>`).join('')}</div>
-    <div class="test-phases test-waits"><span class="small">Odotusnäyttö:</span>${[1, 2, 3, 4].map((p) => `<button class="btn btn--sm ${p === state.phase && state.me.locked ? 'btn--primary' : 'btn--secondary'}" data-act="test-wait" data-phase="${p}" title="Vaiheen ${p} odotusnäyttö (lukittu)">${p}</button>`).join('')}</div>
+    <div class="test-phases test-waits"><span class="small">Odotusnäyttö:</span>${[1, 2, 3, 4, 5].map((p) => `<button class="btn btn--sm ${p === state.phase && state.me.locked ? 'btn--primary' : 'btn--secondary'}" data-act="test-wait" data-phase="${p}" title="Vaiheen ${p} odotusnäyttö (lukittu)">${p}</button>`).join('')}</div>
     <div class="test-tools">${state.me.locked ? '<button class="btn btn--ghost" data-act="test-unlock">Avaa lukko</button>' : ''}<button class="btn btn--ghost" data-act="test-reset">Aloita alusta</button></div>
   </div></div>`;
 }
@@ -915,13 +930,13 @@ const tid = () => 't' + Math.random().toString(36).slice(2, 10);
 
 // Samat lukitusehdot kuin palvelimella, laskettuna paikallisesta kokeilusta
 function simLockReady() {
-  const s = state; const L = s.limits;
+  const s = state;
   if (s.phase === 2 && !s.categories.some((c) => c.myVote)) return { ok: false, reason: 'Äänestä vähintään yhtä kategoriaa ennen lukitsemista.' };
-  if (s.phase === 3) {
-    const miss = s.categories.filter((c) => { const ns = s.nominees.filter((n) => n.categoryId === c.id); return ns.filter((n) => n.myVote).length < Math.min(L.votesP2, ns.length); });
-    if (miss.length) return { ok: false, reason: `Käytä kaikki äänesi ennen lukitsemista. Ääniä puuttuu: ${miss.map((c) => c.name).join(', ')}.` };
+  if (s.phase === 4) {
+    const miss = rankProgress().filter((x) => x.have < x.need);
+    if (miss.length) return { ok: false, reason: `Jaa kaikki sijat ennen lukitsemista. Puuttuu: ${miss.map((x) => `${x.cat.name} (${x.have}/${x.need})`).join(', ')}.` };
   }
-  if (s.phase === 4 && !s.nominees.some((n) => n.myFinal)) return { ok: false, reason: 'Äänestä vähintään yhtä finalistia ennen lukitsemista.' };
+  if (s.phase === 5 && !s.nominees.some((n) => n.myFinal)) return { ok: false, reason: 'Äänestä vähintään yhtä finalistia ennen lukitsemista.' };
   return { ok: true, reason: '' };
 }
 
@@ -933,10 +948,11 @@ function simulate(act, d = {}) {
       if (!c.myVote && s.used.catVotes >= L.catVotes) return fail(`Olet käyttänyt kaikki ${L.catVotes} ääntäsi. Poista ääni toisesta kategoriasta ensin.`);
       c.myVote = !c.myVote; s.used.catVotes += c.myVote ? 1 : -1; break;
     }
-    case 'vote-nom': {
+    case 'rank': {
       const n = s.nominees.find((x) => x.id === d.id); if (!n) return false;
-      if (!n.myVote && s.nominees.filter((x) => x.categoryId === n.categoryId && x.myVote).length >= L.votesP2) return fail(`Sinulla on ${L.votesP2} ääntä per kategoria. Poista ääni ensin toiselta ehdokkaalta.`);
-      n.myVote = !n.myVote; break;
+      s.myRanks = s.myRanks || {};
+      s.myRanks[n.categoryId] = applyRank(myRanking(n.categoryId), n.id, d.place);
+      break;
     }
     case 'final': { const n = s.nominees.find((x) => x.id === d.id); if (!n) return false; s.nominees.forEach((x) => { if (x.categoryId === n.categoryId) x.myFinal = x.id === n.id; }); break; }
     case 'lock': { const r = simLockReady(); if (!r.ok) return fail(r.reason); s.me.locked = true; break; }
@@ -951,12 +967,16 @@ function simulate(act, d = {}) {
       const p = (s.people || []).find((x) => x.id === d.personId); if (!p) return false;
       if (d.reason.length < 3) return fail('Kirjoita myös mistä ehdotat.');
       if (s.nominees.filter((n) => n.categoryId === d.categoryId && n.mine).length >= L.maxNomineeProposals) return fail(`Voit ehdottaa enintään ${L.maxNomineeProposals} ehdokasta per kategoria.`);
-      s.nominees.push({ id: tid(), categoryId: d.categoryId, personId: p.id, name: p.name, reason: d.reason, photo: p.photo, finalist: false, mine: true, myVote: false, myFinal: false });
+      s.nominees.push({ id: tid(), categoryId: d.categoryId, personId: p.id, name: p.name, reason: d.reason, photo: p.photo, finalist: false, mine: true, myFinal: false });
       break;
     }
     case 'del': {
       if (d.kind === 'cat') { s.categories = s.categories.filter((c) => c.id !== d.id); s.used.catProposals = s.categories.filter((c) => c.mine).length; }
-      else s.nominees = s.nominees.filter((n) => n.id !== d.id);
+      else {
+        const n = s.nominees.find((x) => x.id === d.id);
+        s.nominees = s.nominees.filter((x) => x.id !== d.id);
+        if (n && s.myRanks && s.myRanks[n.categoryId]) s.myRanks[n.categoryId] = s.myRanks[n.categoryId].map((x) => (x === n.id ? null : x));
+      }
       break;
     }
     case 'edit': {
@@ -980,7 +1000,7 @@ function simulate(act, d = {}) {
 
 // ---------- Lukitus ("Lukko sisään") ----------
 function lockBar() {
-  const what = { 1: 'ehdotuksiasi', 2: 'ääniäsi', 3: 'ääniäsi ja ehdotuksiasi', 4: 'finaaliääniäsi' }[state.phase];
+  const what = { 1: 'ehdotuksiasi', 2: 'ääniäsi', 3: 'ehdotuksiasi', 4: 'sijoituksiasi', 5: 'finaaliääniäsi' }[state.phase];
   return `
   <section class="section">
     <div class="panel lock-panel">
@@ -1003,8 +1023,9 @@ function lockWarning() {
     const left = L.catVotes - s.used.catVotes;
     return left > 0 ? `Sinulla on vielä ${left} ääntä käyttämättä.\n\n` : '';
   }
-  if (s.phase === 3) return '';
-  if (s.phase === 4) {
+  if (s.phase === 3) return s.nominees.some((n) => n.mine) ? '' : 'Et ole ehdottanut yhtään ehdokasta.\n\n';
+  if (s.phase === 4) return '';
+  if (s.phase === 5) {
     const left = s.categories.filter((c) => !s.nominees.some((n) => n.categoryId === c.id && n.myFinal)).length;
     return left > 0 ? `${left} kategoriaa on vielä äänestämättä.\n\n` : '';
   }
@@ -1022,13 +1043,24 @@ function waitingView() {
   } else if (s.phase === 2) {
     const mine = s.categories.filter((c) => c.myVote).map((c) => c.name);
     rows = [['Äänestämäsi kategoriat', mine.length ? mine.join(', ') : 'Ei ääniä']];
+  } else if (s.phase === 3) {
+    rows = s.categories.map((c) => {
+      const mine = s.nominees.filter((n) => n.categoryId === c.id && n.mine).map((n) => `${n.name} – ${n.reason}`);
+      return [c.name, mine.length ? mine.join(' · ') : 'Ei ehdotuksia'];
+    });
+  } else if (s.phase === 4) {
+    const byId = Object.fromEntries(s.nominees.map((n) => [n.id, n]));
+    rows = s.categories.map((c) => {
+      const picks = myRanking(c.id).map((id, i) => (id && byId[id] ? `${i + 1}. ${byId[id].name}` : null)).filter(Boolean);
+      return [c.name, picks.length ? picks.join(' · ') : 'Ei sijoituksia'];
+    });
   } else {
     rows = s.categories.map((c) => {
-      const picks = s.nominees.filter((n) => n.categoryId === c.id && (s.phase === 3 ? n.myVote : n.myFinal)).map((n) => n.name);
+      const picks = s.nominees.filter((n) => n.categoryId === c.id && n.myFinal).map((n) => n.name);
       return [c.name, picks.length ? picks.join(', ') : 'Ei ääntä'];
     });
   }
-  const last = s.phase === 4;
+  const last = s.phase === LAST_OPEN;
   // Näytetään erikseen asetettu "seuraava vaihe alkaa" -aika ja/tai tämän vaiheen päättymisaika vaihepalkin asetuksista
   const end = s.phaseEnds && s.phaseEnds[s.phase];
   const when = [
@@ -1039,7 +1071,7 @@ function waitingView() {
   <section class="section screen-center">
     <div class="panel lock-panel is-locked">
       <img class="lock-trophy" src="/logo.svg" alt="" width="108" height="236">
-      <p class="eyebrow">Lukko sisään · vaihe ${s.phase} / 4</p>
+      <p class="eyebrow">Lukko sisään · vaihe ${s.phase} / ${LAST_OPEN}</p>
       <h1 class="h1">${last ? 'Äänesi on lukittu' : 'Seuraava vaihe ei ole vielä alkanut'}</h1>
       ${when}
       <p class="muted" style="margin:0;max-width:52ch">${last ? 'Kiitos äänistä! Voittajat julkistetaan Gaalassa.' : 'Olet jo vastannut tähän vaiheeseen. Odota, että järjestäjät avaavat seuraavan vaiheen – sivu päivittyy itsestään.'}</p>
@@ -1156,15 +1188,12 @@ function cropStyle(c) {
   return `object-position:${x}% ${y}%;transform-origin:${x}% ${y}%;transform:scale(${z})`;
 }
 
-// Vaihe 3: ehdokkaat. Ehdotetaan valitsemalla henkilökortti ja kirjoittamalla peruste; äänestetään erikseen.
+// Vaihe 3: ehdokkaat. Ehdotetaan valitsemalla henkilökortti ja kirjoittamalla peruste. Äänestys on vaihe 4.
 function phaseNominees() {
   const s = state; const L = s.limits;
   return s.categories.map((c, idx) => {
     const noms = s.nominees.filter((n) => n.categoryId === c.id)
       .sort((a, b) => a.name.localeCompare(b.name, 'fi') || a.reason.localeCompare(b.reason, 'fi'));
-    const used = noms.filter((n) => n.myVote).length;
-    const need = Math.min(L.votesP2, noms.length);
-    const full = used >= L.votesP2;
     const myProps = noms.filter((n) => n.mine).length;
     const propsLeft = L.maxNomineeProposals - myProps;
     const picked = proposing && proposing.catId === c.id ? (s.people || []).find((p) => p.id === proposing.personId) : null;
@@ -1172,25 +1201,23 @@ function phaseNominees() {
     <section class="section" id="cat-${c.id}">
       <header class="cat-head">
         <p class="eyebrow">Kategoria ${String(idx + 1).padStart(2, '0')}</p>
-        <div class="row"><h2 class="h2">${esc(c.name)}</h2><span class="meter small">${pips(used, L.votesP2)} Ääniä käytetty ${used} / ${L.votesP2}</span></div>
+        <div class="row"><h2 class="h2">${esc(c.name)}</h2><span class="meter small">${pips(myProps, L.maxNomineeProposals)} Ehdotuksia ${myProps} / ${L.maxNomineeProposals}</span></div>
         ${c.description ? `<p class="muted" style="margin:0">${esc(c.description)}</p>` : ''}
       </header>
       ${noms.length ? `
-      ${used < need ? `<p class="notice small">Äänestä vielä ${need - used} ehdokasta tässä kategoriassa.</p>` : ''}
       <div class="nom-grid">
         ${noms.map((n) => `
-        <article class="nom-card ${n.myVote ? 'is-voted' : ''}">
+        <article class="nom-card">
           <div class="nom-media">${portrait(n)}${n.mine ? '<span class="tag nom-tag">Sinun ehdotuksesi</span>' : ''}</div>
           ${isEditing('nom', n.id, false) ? `<div class="nom-body">${editForm('nom', n, false)}</div>` : `<div class="nom-body">
             <h3 class="h3">${esc(n.name)}</h3>
             <p>${esc(n.reason)}</p>
             ${n.mine ? `<div class="item-actions">${editButton('nom', n.id, false)}${deleteButton('nom', n.id)}</div>` : ''}
-          </div>
-          <button class="btn btn--sm ${n.myVote ? 'btn--voted' : 'btn--secondary'}" data-act="vote-nom" data-id="${n.id}" aria-pressed="${n.myVote}" ${!n.myVote && full ? 'disabled title="Kategorian äänet käytetty"' : ''}>${n.myVote ? 'Äänestetty' : 'Äänestä'}</button>`}
+          </div>`}
         </article>`).join('')}
       </div>` : '<div class="empty">Ei vielä ehdokkaita. Ehdota ensimmäinen alla.</div>'}
       <div class="panel propose-panel">
-        <div class="cat-head" style="border:0;padding:0"><p class="eyebrow">Ehdota ehdokasta</p><p class="small muted" style="margin:0">${propsLeft > 0 ? `Valitse henkilö ja kirjoita mistä. Ehdotuksia jäljellä ${propsLeft} / ${L.maxNomineeProposals}. Ehdottaminen ei anna ääntä.` : `Olet käyttänyt kaikki ${L.maxNomineeProposals} ehdotustasi tässä kategoriassa. Voit poistaa oman ehdotuksesi, jos haluat ehdottaa jotain muuta.`}</p></div>
+        <div class="cat-head" style="border:0;padding:0"><p class="eyebrow">Ehdota ehdokasta</p><p class="small muted" style="margin:0">${propsLeft > 0 ? `Valitse henkilö ja kirjoita mistä. Ehdotuksia jäljellä ${propsLeft} / ${L.maxNomineeProposals}.` : `Olet käyttänyt kaikki ${L.maxNomineeProposals} ehdotustasi tässä kategoriassa. Voit poistaa oman ehdotuksesi, jos haluat ehdottaa jotain muuta.`}</p></div>
         <div class="person-grid" role="list">
           ${(s.people || []).map((p) => `
           <button type="button" class="person-card ${picked && picked.id === p.id ? 'is-picked' : ''}" role="listitem" data-act="pick-person" data-cat="${c.id}" data-person="${p.id}" ${propsLeft > 0 ? '' : 'disabled'} aria-pressed="${!!(picked && picked.id === p.id)}">
@@ -1207,7 +1234,73 @@ function phaseNominees() {
   }).join('');
 }
 
-// Vaihe 4: finaali pystykortteina. Koko kortti on valintanappi (radio), joten valinta toimii myös näppäimistöllä.
+// ---------- Vaihe 4: ehdokasäänestys (top 3 per kategoria) ----------
+// Oma sijoitus kategoriassa: taulukko [1. sija, 2. sija, 3. sija] (tyhjä = null), pituus = jaettavat sijat
+function rankSlotsFor(catId) {
+  return Math.min((state.limits && state.limits.rankSlots) || 3, state.nominees.filter((n) => n.categoryId === catId).length);
+}
+function myRanking(catId) {
+  const slots = rankSlotsFor(catId);
+  const ids = new Set(state.nominees.filter((n) => n.categoryId === catId).map((n) => n.id));
+  const arr = ((state.myRanks || {})[catId] || []).slice(0, slots).map((id) => (ids.has(id) ? id : null));
+  while (arr.length < slots) arr.push(null);
+  return arr;
+}
+function rankProgress() {
+  return state.categories.map((c) => ({ cat: c, need: rankSlotsFor(c.id), have: myRanking(c.id).filter(Boolean).length }));
+}
+// Sama logiikka kuin palvelimella: ehdokas sijalle (0 = pois); varatun sijan haltija vaihtaa paikkaa
+function applyRank(arr, id, place) {
+  arr = arr.slice();
+  const from = arr.indexOf(id);
+  if (from >= 0) arr[from] = null;
+  if (place > 0) {
+    const prev = arr[place - 1];
+    if (prev && from >= 0) arr[from] = prev;
+    arr[place - 1] = id;
+  }
+  return arr;
+}
+function phaseRanking() {
+  const s = state; const pts = s.limits.rankPoints || [3, 2, 1];
+  return s.categories.map((c, idx) => {
+    const noms = s.nominees.filter((n) => n.categoryId === c.id)
+      .sort((a, b) => a.name.localeCompare(b.name, 'fi') || a.reason.localeCompare(b.reason, 'fi'));
+    const ranking = myRanking(c.id);
+    const byId = Object.fromEntries(noms.map((n) => [n.id, n]));
+    const have = ranking.filter(Boolean).length;
+    return `
+    <section class="section" id="cat-${c.id}">
+      <header class="cat-head">
+        <p class="eyebrow">Kategoria ${String(idx + 1).padStart(2, '0')}</p>
+        <div class="row"><h2 class="h2">${esc(c.name)}</h2><span class="meter small">${pips(have, ranking.length)} Sijat ${have} / ${ranking.length}</span></div>
+        ${c.description ? `<p class="muted" style="margin:0">${esc(c.description)}</p>` : ''}
+      </header>
+      ${noms.length ? `
+      <ol class="rank-summary" aria-label="Sinun top ${ranking.length}: ${esc(c.name)}">
+        ${ranking.map((id, i) => `<li class="${id ? 'is-set' : ''}"><span class="rank-medal r${i + 1}">${i + 1}.</span><span class="rank-name">${id && byId[id] ? esc(byId[id].name) : '<span class="muted">valitse alta</span>'}</span><span class="rank-pts">${pts[i]} p</span></li>`).join('')}
+      </ol>
+      <div class="nom-grid">
+        ${noms.map((n) => {
+          const place = ranking.indexOf(n.id) + 1;
+          return `
+        <article class="nom-card ${place ? `is-voted rank-${place}` : ''}">
+          <div class="nom-media">${portrait(n)}${place ? `<span class="rank-badge r${place}" aria-hidden="true">${place}.</span>` : ''}${n.mine ? '<span class="tag nom-tag">Sinun ehdotuksesi</span>' : ''}</div>
+          <div class="nom-body">
+            <h3 class="h3">${esc(n.name)}</h3>
+            <p>${esc(n.reason)}</p>
+          </div>
+          <div class="rank-btns" role="group" aria-label="Sija: ${esc(n.name)}">
+            ${ranking.map((_, i) => `<button type="button" class="rank-btn r${i + 1} ${place === i + 1 ? 'is-on' : ''}" data-act="rank" data-id="${n.id}" data-place="${i + 1}" aria-pressed="${place === i + 1}" title="${place === i + 1 ? 'Poista sijalta' : PLACE_LABEL[i + 1] + ' (' + pts[i] + ' p)'}">${i + 1}.</button>`).join('')}
+          </div>
+        </article>`;
+        }).join('')}
+      </div>` : '<div class="empty">Tähän kategoriaan ei tullut ehdokkaita.</div>'}
+    </section>`;
+  }).join('');
+}
+
+// Vaihe 5: finaali pystykortteina. Koko kortti on valintanappi (radio), joten valinta toimii myös näppäimistöllä.
 function phaseFinal() {
   const s = state;
   return s.categories.map((c, idx) => {
@@ -1238,7 +1331,7 @@ function adminView() {
   const s = state; const a = s.admin; const L = s.limits;
   const maxCat = Math.max(1, ...a.categories.map((c) => c.votes));
   const advanced = a.categories.filter((c) => c.advanced);
-  const phaseNames = { 1: 'Kategoriaehdotukset', 2: 'Kategoria-äänestys', 3: 'Ehdokkaat', 4: 'Finaali', 5: 'Suljettu' };
+  const phaseNames = { 1: 'Kategoriaehdotukset', 2: 'Kategoria-äänestys', 3: 'Ehdokasehdotukset', 4: 'Ehdokasäänestys', 5: 'Finaali', 6: 'Suljettu' };
   return `
   <section class="admin" aria-labelledby="admin-h">
     <header class="cat-head"><p class="eyebrow">Vain järjestäjille</p><h2 class="h2" id="admin-h">Hallinta</h2></header>
@@ -1247,14 +1340,14 @@ function adminView() {
       <div class="panel">
         <p class="eyebrow">Vaihe</p>
         <p style="margin:0">Nyt: <b>${s.phase}. ${phaseNames[s.phase]}</b></p>
-        <div class="phase-btns">${[1, 2, 3, 4, 5].filter((p) => p !== s.phase).map((p) => `<button class="btn btn--sm ${p === s.phase + 1 ? 'btn--primary' : 'btn--secondary'}" data-act="phase" data-phase="${p}">${p > s.phase ? 'Siirry' : 'Palaa'}: ${phaseNames[p]}</button>`).join('')}</div>
+        <div class="phase-btns">${[1, 2, 3, 4, 5, 6].filter((p) => p !== s.phase).map((p) => `<button class="btn btn--sm ${p === s.phase + 1 ? 'btn--primary' : 'btn--secondary'}" data-act="phase" data-phase="${p}">${p > s.phase ? 'Siirry' : 'Palaa'}: ${phaseNames[p]}</button>`).join('')}</div>
       </div>
       <div class="panel">
         <p class="eyebrow">Osallistujat</p>
         <p style="margin:0" class="h3">${a.participants.length} koodia · ${a.participants.filter((p) => p.joined).length} kirjautunut</p>
-        <p class="small muted" style="margin:0">Osallistuneita: ehdotukset – ${a.voters.p1}, kategoria-äänestys – ${a.voters.p2}, ehdokkaat – ${a.voters.p3}, finaali – ${a.voters.p4}</p>
-        ${s.phase <= 4 ? `<p class="small" style="margin:0">Lukinneet tässä vaiheessa: <b style="color:var(--gold-light);font-weight:500">${a.locked} / ${a.participants.filter((p) => !p.tester).length}</b></p>` : ''}
-        ${s.phase <= 4 && a.participants.some((p) => p.unlockRequested) ? `<p class="small unlock-req-line" style="margin:0">Lukon avausta pyytää: <b>${a.participants.filter((p) => p.unlockRequested).map((p) => esc(p.name)).join(', ')}</b> <span class="muted">(Osallistujat → Avaa lukko)</span></p>` : ''}
+        <p class="small muted" style="margin:0">Osallistuneita: kategoriaehdotukset – ${a.voters.p1}, kategoria-äänestys – ${a.voters.p2}, ehdokasehdotukset – ${a.voters.p3}, ehdokasäänestys – ${a.voters.p4}, finaali – ${a.voters.p5}</p>
+        ${s.phase <= LAST_OPEN ? `<p class="small" style="margin:0">Lukinneet tässä vaiheessa: <b style="color:var(--gold-light);font-weight:500">${a.locked} / ${a.participants.filter((p) => !p.tester).length}</b></p>` : ''}
+        ${s.phase <= LAST_OPEN && a.participants.some((p) => p.unlockRequested) ? `<p class="small unlock-req-line" style="margin:0">Lukon avausta pyytää: <b>${a.participants.filter((p) => p.unlockRequested).map((p) => esc(p.name)).join(', ')}</b> <span class="muted">(Osallistujat → Avaa lukko)</span></p>` : ''}
       </div>
       ${k18Panel()}
     </div>
@@ -1264,11 +1357,10 @@ function adminView() {
     <form class="panel" id="settings-form">
       <p class="eyebrow">Asetukset</p>
       <div class="admin-grid">
-        ${[['Ehdotukset', 1], ['Kategoria-äänestys', 2], ['Ehdokkaat', 3], ['Finaali', 4]].map(([n, p]) => `<div class="field"><label for="s-end${p}">Vaihe ${p} (${n}) päättyy</label><input class="input" id="s-end${p}" type="datetime-local" value="${esc((s.phaseEnds || {})[p] || '')}"></div>`).join('')}
+        ${[['Kategoriaehdotukset', 1], ['Kategoria-äänestys', 2], ['Ehdokasehdotukset', 3], ['Ehdokasäänestys', 4], ['Finaali', 5]].map(([n, p]) => `<div class="field"><label for="s-end${p}">Vaihe ${p} (${n}) päättyy</label><input class="input" id="s-end${p}" type="datetime-local" value="${esc((s.phaseEnds || {})[p] || '')}"></div>`).join('')}
         <div class="field"><label for="s-next">Seuraava vaihe alkaa (näkyy odotusnäytöllä)</label><input class="input" id="s-next" value="${esc(s.nextStart)}" placeholder="la 5.12. klo 18"><span class="small muted">Tyhjenee, kun vaihe vaihtuu</span></div>
         <div class="field"><label for="s-tc">Kategorioita Gaalassa (sis. kiinteän)</label><input class="input" id="s-tc" type="number" min="2" max="50" value="${L.targetCategories}"><span class="small muted">→ äänestyksellä valitaan ${L.advanceCount}</span></div>
         <div class="field"><label for="s-cv">Ääniä / hlö kategoria-äänestyksessä</label><input class="input" id="s-cv" type="number" min="1" max="50" value="${L.catVotes}"></div>
-        <div class="field"><label for="s-v2">Ääniä / kategoria ehdokasvaiheessa</label><input class="input" id="s-v2" type="number" min="1" max="50" value="${L.votesP2}"></div>
         <div class="field"><label for="s-mc">Kategoriaehdotuksia / hlö</label><input class="input" id="s-mc" type="number" min="1" max="50" value="${L.maxCategoryProposals}"></div>
         <div class="field"><label for="s-mn">Ehdokasehdotuksia / hlö / kategoria</label><input class="input" id="s-mn" type="number" min="1" max="50" value="${L.maxNomineeProposals}"></div>
         <div class="field"><label for="s-fi">Finalisteja / kategoria (automaattivalinta)</label><input class="input" id="s-fi" type="number" min="1" max="50" value="${L.finalists}"></div>
@@ -1304,31 +1396,32 @@ function adminView() {
     <div style="display:grid;gap:12px">
       <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
         <p class="eyebrow">Ehdokkaat · valitse finalistit</p>
-        <button class="btn btn--secondary btn--sm" data-act="auto-finalists">Valitse ${L.finalists} eniten ääniä saanutta jokaiseen</button>
-        ${s.phase >= 4 ? `<label class="check small"><input type="checkbox" data-act="toggle-final-counts" ${showFinalCounts ? 'checked' : ''}> Näytä finaalin äänet (spoileri)</label>` : ''}
+        <button class="btn btn--secondary btn--sm" data-act="auto-finalists">Valitse ${L.finalists} eniten pisteitä saanutta jokaiseen</button>
+        ${s.phase >= 5 ? `<label class="check small"><input type="checkbox" data-act="toggle-final-counts" ${showFinalCounts ? 'checked' : ''}> Näytä finaalin äänet (spoileri)</label>` : ''}
       </div>
       ${advanced.map((c) => {
-        const noms = a.nominees.filter((n) => n.categoryId === c.id).sort((x, y) => y.votes - x.votes);
-        const max = Math.max(1, ...noms.map((n) => n.votes));
+        // Järjestys pisteiden mukaan; tasapisteissä enemmän 1. sijoja, sitten 2. sijoja (sama kuin automaattivalinnassa)
+        const noms = a.nominees.filter((n) => n.categoryId === c.id).sort((x, y) => y.points - x.points || y.places[0] - x.places[0] || y.places[1] - x.places[1] || y.places[2] - x.places[2]);
+        const max = Math.max(1, ...noms.map((n) => n.points));
         const fin = noms.filter((n) => n.finalist).length;
         return `<div class="table-wrap"><table>
-          <thead><tr><th colspan="${s.phase >= 4 && showFinalCounts ? 6 : 5}">${esc(c.name)} · ${fin} finalistia</th></tr></thead>
+          <thead><tr><th colspan="${s.phase >= 5 && showFinalCounts ? 6 : 5}">${esc(c.name)} · ${fin} finalistia</th></tr></thead>
           <tbody>${noms.map((n) => `
             <tr data-drop-target="nom" data-drop-id="${n.id}">
               <td style="width:1%"><input type="checkbox" class="check" style="width:18px;height:18px;accent-color:var(--gold)" data-act="finalist" data-id="${n.id}" ${n.finalist ? 'checked' : ''} aria-label="Finalisti: ${esc(n.name)}"></td>
               <td>${isEditing('nom', n.id, true) ? editForm('nom', n, true) : `<div class="adm-entry">${portrait(n, 'thumb')}<div><b style="font-weight:500">${esc(n.name)}</b>${n.reason ? `<div class="small muted">${esc(n.reason)}</div>` : ''}<div class="by">Ehdottaja: ${esc(n.byName || 'poistettu osallistuja')}</div>
                 <div class="photo-actions">${photoButton('nom', n.id, n.ownPhoto ? 'Vaihda kortin kuva' : 'Kortin oma kuva')}${n.photo ? `<button class="btn btn--ghost" data-act="crop-open" data-target="nom" data-id="${n.id}">Rajaa ja esikatsele</button>` : ''}${n.ownPhoto ? `<button class="btn btn--ghost" data-act="photo-del" data-target="nom" data-id="${n.id}">Poista kortin kuva</button>` : ''}</div></div></div>`}</td>
-              <td style="width:25%"><div class="bar"><i style="width:${(n.votes / max) * 100}%"></i></div></td>
-              <td class="num">${n.votes}</td>
-              ${s.phase >= 4 && showFinalCounts ? `<td class="num" style="color:var(--gold-text)">${n.finalist ? n.finalVotes + ' fin.' : ''}${n.finalVoters.length ? `<div class="voters">${esc(n.finalVoters.join(', '))}</div>` : ''}</td>` : ''}
+              <td style="width:25%"><div class="bar"><i style="width:${(n.points / max) * 100}%"></i></div>${n.points ? `<div class="small muted rank-split">1.×${n.places[0]} · 2.×${n.places[1]} · 3.×${n.places[2]}</div>` : ''}${n.rankVoters.length ? `<div class="voters">${[1, 2, 3].map((pl) => { const v = n.rankVoters.filter((x) => x.place === pl).map((x) => x.name); return v.length ? `${pl}.: ${esc(v.join(', '))}` : ''; }).filter(Boolean).join(' · ')}</div>` : ''}</td>
+              <td class="num">${n.points} p</td>
+              ${s.phase >= 5 && showFinalCounts ? `<td class="num" style="color:var(--gold-text)">${n.finalist ? n.finalVotes + ' fin.' : ''}${n.finalVoters.length ? `<div class="voters">${esc(n.finalVoters.join(', '))}</div>` : ''}</td>` : ''}
               <td class="act">${isEditing('nom', n.id, true) ? '' : `${editButton('nom', n.id, true)}<button class="btn btn--ghost" data-act="del-nom" data-id="${n.id}" aria-label="Poista ${esc(n.name)}">Poista</button>`}</td>
             </tr>`).join('') || `<tr><td colspan="6" class="muted">Ei ehdokkaita.</td></tr>`}</tbody>
         </table></div>`;
       }).join('')}
     </div>` : ''}
 
-    ${s.phase === 5 ? resultsView() : ''}
-    ${s.phase === 5 || (a.feedbackLog || []).length ? feedbackLogView() : ''}
+    ${s.phase === 6 ? resultsView() : ''}
+    ${s.phase === 6 || (a.feedbackLog || []).length ? feedbackLogView() : ''}
 
     <div class="panel danger-panel">
       <p class="eyebrow">Vaaravyöhyke</p>
@@ -1348,8 +1441,9 @@ function participantsView() {
   const status = (p) => {
     if (ph === 1) return `${p.p1} / ${L.maxCategoryProposals} ehdotusta`;
     if (ph === 2) return `${p.p2} / ${L.catVotes} ääntä`;
-    if (ph === 3) return `${p.p3} / ${a.nomVoteNeed} ääntä`;
-    return `${p.p4} / ${state.categories.length} ääntä`;
+    if (ph === 3) return `${p.p3} ehdotusta`;
+    if (ph === 4) return `${p.p4} / ${a.rankCats} kategoriaa`;
+    return `${p.p5} / ${state.categories.length} ääntä`;
   };
   return `
   <div style="display:grid;gap:12px">
@@ -1360,13 +1454,13 @@ function participantsView() {
       <div><button class="btn btn--secondary btn--sm" type="submit">Luo koodit</button></div>
     </form>
     ${a.participants.length ? `<div class="table-wrap"><table>
-      <thead><tr><th>Nimi</th><th>Koodi</th><th>${ph >= 4 ? 'Finaali' : 'Vaihe ' + ph} · käytetty</th><th>Ehdokkaana</th><th>Testi</th><th>Admin</th><th></th></tr></thead>
+      <thead><tr><th>Nimi</th><th>Koodi</th><th>${ph >= 5 ? 'Finaali' : 'Vaihe ' + ph} · käytetty</th><th>Ehdokkaana</th><th>Testi</th><th>Admin</th><th></th></tr></thead>
       <tbody>${a.participants.map((p) => `
         <tr data-drop-target="user" data-drop-id="${p.id}">
           <td><div class="adm-entry">${portrait({ ...p, photo: p.shownPhoto }, 'thumb')}<div><b style="font-weight:500">${esc(p.name)}</b>${p.tester ? ' <span class="tag tag--red">Testi</span>' : ''}${p.joined ? '' : '<div class="small muted">Ei vielä kirjautunut</div>'}
             <div class="photo-actions">${photoButton('user', p.id, p.photo ? 'Vaihda kuva' : 'Lisää kuva')}${p.photo ? `<button class="btn btn--ghost" data-act="crop-open" data-target="user" data-id="${p.id}">Rajaa</button><button class="btn btn--ghost" data-act="photo-del" data-target="user" data-id="${p.id}">Poista kuva</button>` : ''}${p.safePhoto ? `<button class="btn btn--ghost" data-act="crop-open" data-target="safe" data-id="${p.id}">Rajaa &lt;18</button><button class="btn btn--ghost" data-act="safe-del" data-id="${p.id}">Poista &lt;18</button>` : ''}${versions(p.id) ? `<button class="btn btn--ghost" data-act="photos-open" data-person="${p.id}">Kuvaversiot (${versions(p.id)})</button>` : ''}</div></div></div></td>
           <td><code class="code">${esc(p.code)}</code></td>
-          <td class="small">${ph <= 4 ? status(p) : '–'}${p.locked && ph <= 4 ? ' <span class="tag tag--gold">Lukittu</span>' : ''}</td>
+          <td class="small">${ph <= LAST_OPEN ? status(p) : '–'}${p.locked && ph <= LAST_OPEN ? ' <span class="tag tag--gold">Lukittu</span>' : ''}</td>
           <td class="nominable"><input type="checkbox" data-act="user-nominable" data-id="${p.id}" ${p.nominable ? 'checked' : ''} aria-label="Ehdokkaana: ${esc(p.name)}" title="Näkyykö henkilö ehdokaskorteissa"></td>
           <td class="tester"><input type="checkbox" data-act="user-tester" data-id="${p.id}" ${p.tester ? 'checked' : ''} aria-label="Testikäyttäjä: ${esc(p.name)}" title="Testikäyttäjä voi selata kaikkia vaiheita; mitään ei tallenneta"></td>
           <td><input type="checkbox" style="width:18px;height:18px;accent-color:var(--gold)" data-act="user-admin" data-id="${p.id}" ${p.admin ? 'checked' : ''} aria-label="Admin: ${esc(p.name)}"></td>
@@ -1375,7 +1469,7 @@ function participantsView() {
             <button class="btn btn--ghost" data-act="copy-link" data-code="${esc(p.code)}" data-name="${esc(p.name)}">Kopioi linkki</button>
             <button class="btn btn--ghost" data-act="user-regen" data-id="${p.id}">Uusi koodi</button>
             <button class="btn btn--ghost" data-act="user-del" data-id="${p.id}">Poista</button>
-            ${p.locked && ph <= 4 ? `<button class="btn btn--ghost act-unlock" data-act="user-unlock" data-id="${p.id}" data-name="${esc(p.name)}">Avaa lukko${p.unlockRequested ? ' <span class="unlock-req-tag">pyytää</span>' : ''}</button>` : ''}
+            ${p.locked && ph <= LAST_OPEN ? `<button class="btn btn--ghost act-unlock" data-act="user-unlock" data-id="${p.id}" data-name="${esc(p.name)}">Avaa lukko${p.unlockRequested ? ' <span class="unlock-req-tag">pyytää</span>' : ''}</button>` : ''}
           </div></td>
         </tr>`).join('')}</tbody>
     </table></div>
@@ -1409,11 +1503,11 @@ function feedbackView(waiting = false) {
 
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleString('fi-FI', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
 
-// Hallinnan palauteloki: kirjoittaja näkyy vain täällä. Eritelty vaiheittain: vaiheiden 1–4 odotustilat ja suljettu vaihe.
-const FEEDBACK_GROUPS = { 1: 'Odotustila · vaihe 1 Kategoriaehdotukset', 2: 'Odotustila · vaihe 2 Kategoria-äänestys', 3: 'Odotustila · vaihe 3 Ehdokkaat', 4: 'Odotustila · vaihe 4 Finaali', 5: 'Suljettu · Gaalan jälkeen' };
+// Hallinnan palauteloki: kirjoittaja näkyy vain täällä. Eritelty vaiheittain: vaiheiden 1–5 odotustilat ja suljettu vaihe.
+const FEEDBACK_GROUPS = { 1: 'Odotustila · vaihe 1 Kategoriaehdotukset', 2: 'Odotustila · vaihe 2 Kategoria-äänestys', 3: 'Odotustila · vaihe 3 Ehdokasehdotukset', 4: 'Odotustila · vaihe 4 Ehdokasäänestys', 5: 'Odotustila · vaihe 5 Finaali', 6: 'Suljettu · Gaalan jälkeen' };
 function feedbackLogView() {
   const log = state.admin.feedbackLog || [];
-  const groups = [1, 2, 3, 4, 5].map((ph) => [ph, log.filter((f) => (f.phase || 5) === ph).reverse()]).filter(([, l]) => l.length);
+  const groups = [1, 2, 3, 4, 5, 6].map((ph) => [ph, log.filter((f) => (f.phase || 6) === ph).reverse()]).filter(([, l]) => l.length);
   return `
   <div style="display:grid;gap:12px">
     <p class="eyebrow">Palauteloki · ${log.length}</p>
@@ -1449,10 +1543,10 @@ function statsView() {
     ['Vaihe 1 · Kategoriaehdotukset', [...st.categories].sort(byTime).map((c) => [c.at, c.name, [c.description, c.editedAt ? `muokattu ${fmtWhen(c.editedAt)}` : '', c.advanced ? 'pääsi Gaalaan' : ''].filter(Boolean).join(' · ')])],
     ['Vaihe 2 · Kategoria-äänet', [...st.catVotes].sort(byTime).map((v) => [v.at, v.name, ''])],
     ['Vaihe 3 · Ehdokasehdotukset', [...st.nominees].sort(byTime).map((n) => [n.at, `${n.name} – ${n.reason}`, [n.category, n.editedAt ? `muokattu ${fmtWhen(n.editedAt)}` : '', n.finalist ? 'finalisti' : ''].filter(Boolean).join(' · ')])],
-    ['Vaihe 3 · Ehdokasäänet', [...st.nomVotes].sort(byTime).map((v) => [v.at, `${v.name} – ${v.reason}`, v.category])],
-    ['Vaihe 4 · Finaaliäänet', [...st.finals].sort(byTime).map((v) => [v.at, `${v.name} – ${v.reason}`, v.category])],
+    ['Vaihe 4 · Ehdokasäänestys (top 3)', [...st.ranks].sort((a, b) => byTime(a, b) || a.place - b.place).map((v) => [v.at, `${v.place}. sija: ${v.name} – ${v.reason}`, v.category])],
+    ['Vaihe 5 · Finaaliäänet', [...st.finals].sort(byTime).map((v) => [v.at, `${v.name} – ${v.reason}`, v.category])],
     ['Lukitukset', [...st.locks].sort(byTime).map((l) => [l.at, `Lukko sisään: vaihe ${l.phase}`, l.phaseName])],
-    ['Palaute', [...st.feedback].sort(byTime).map((f) => [f.at, f.text, (FEEDBACK_GROUPS[f.phase || 5] || '').split(' · ')[0] + ((f.phase || 5) < 5 ? ` (vaihe ${f.phase})` : '')])],
+    ['Palaute', [...st.feedback].sort(byTime).map((f) => [f.at, f.text, (FEEDBACK_GROUPS[f.phase || 6] || '').split(' · ')[0] + ((f.phase || 6) < 6 ? ` (vaihe ${f.phase})` : '')])],
   ];
   const count = (k) => st[k].length;
   return `
@@ -1465,7 +1559,7 @@ function statsView() {
       <p class="small muted" style="margin:0">Viimeksi kirjautunut: ${st.lastLogin ? fmtWhen(st.lastLogin) : 'ei vielä kirjautunut'} · Lisätty: ${fmtWhen(st.createdAt)}</p>
       <div class="stats-chips">
         <span><b>${count('categories')}</b> kategoriaehdotusta</span><span><b>${count('catVotes')}</b> kategoria-ääntä</span>
-        <span><b>${count('nominees')}</b> ehdokasehdotusta</span><span><b>${count('nomVotes')}</b> ehdokasääntä</span>
+        <span><b>${count('nominees')}</b> ehdokasehdotusta</span><span><b>${count('ranks')}</b> ehdokassijoitusta</span>
         <span><b>${count('finals')}</b> finaaliääntä</span><span><b>${count('locks')}</b> lukitusta</span>
       </div>
       ${sections.map(([title, rows]) => `
@@ -1676,7 +1770,12 @@ document.addEventListener('click', async (e) => {
   switch (t.dataset.act) {
     case 'logout': await api('POST', '/api/logout', {}); state = { ...state, me: null }; render(); break;
     case 'vote-cat': if (isTest()) { simulate('vote-cat', { id }); break; } await api('POST', `/api/categories/${id}/vote`, {}).catch(() => {}); break;
-    case 'vote-nom': if (isTest()) { simulate('vote-nom', { id }); break; } await api('POST', `/api/nominees/${id}/vote`, {}).catch(() => {}); break;
+    case 'rank': {
+      // Painettu sija uudelleen = poista sijalta
+      const place = t.getAttribute('aria-pressed') === 'true' ? 0 : Number(t.dataset.place);
+      if (isTest()) { simulate('rank', { id, place }); break; }
+      await api('POST', '/api/ranks', { nomineeId: id, place }).catch(() => {}); break;
+    }
     case 'test-phase':
       previewPhase = Number(t.dataset.phase); editing = null; proposing = null;
       await refresh(); window.scrollTo(0, 0);
@@ -2406,7 +2505,7 @@ document.addEventListener('submit', async (e) => {
       await api('POST', '/api/admin/notify-settings', body);
       clear('n-url');
     } else if (f.id === 'settings-form') {
-      await api('POST', '/api/admin/settings', { deadline: '', phaseEnds: { 1: v('s-end1'), 2: v('s-end2'), 3: v('s-end3'), 4: v('s-end4') }, nextStart: v('s-next'), targetCategories: v('s-tc'), catVotes: v('s-cv'), votesP2: v('s-v2'), maxCategoryProposals: v('s-mc'), maxNomineeProposals: v('s-mn'), finalists: v('s-fi') });
+      await api('POST', '/api/admin/settings', { deadline: '', phaseEnds: { 1: v('s-end1'), 2: v('s-end2'), 3: v('s-end3'), 4: v('s-end4'), 5: v('s-end5') }, nextStart: v('s-next'), targetCategories: v('s-tc'), catVotes: v('s-cv'), maxCategoryProposals: v('s-mc'), maxNomineeProposals: v('s-mn'), finalists: v('s-fi') });
       toast('Asetukset tallennettu.');
     }
   } catch { /* virhe näytetty toastina */ }

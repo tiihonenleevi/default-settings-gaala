@@ -107,7 +107,7 @@ a { color: var(--gold-text); }
 .whoami { display: flex; align-items: center; gap: var(--space-2); font-size: 14px; }
 
 /* ---------- Vaiheet: numeroidut mitalit viivan varrella ---------- */
-.stepper { display: grid; grid-template-columns: repeat(5, 1fr); margin: 0; padding: 0; list-style: none; counter-reset: step; }
+.stepper { display: grid; grid-template-columns: repeat(6, 1fr); margin: 0; padding: 0; list-style: none; counter-reset: step; }
 .stepper li {
   counter-increment: step; position: relative;
   display: grid; justify-items: center; gap: 10px; text-align: center;
@@ -1040,3 +1040,51 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 .award-url { overflow-wrap: anywhere; }
 .award-places-edit { display: grid; gap: 8px; padding: 10px; border: 1px dashed var(--border); border-radius: var(--radius-md); }
 @media (max-width: 480px) { .award-item { grid-template-columns: 1fr; justify-items: start; } }
+
+/* ---------- Ehdokasäänestys (vaihe 4): top 3 per kategoria ---------- */
+/* Sijojen värit: 1. kulta, 2. hopea, 3. pronssi (samat kuin palkintosivun palkintokorokkeella) */
+.r1 { --rank: #f3e09c; --rank-bg: var(--gold-gradient); --rank-line: rgba(210, 175, 87, 0.75); }
+.r2 { --rank: #d7dbe2; --rank-bg: linear-gradient(135deg, #f4f6f9 0%, #c3c8d1 55%, #8e949e 100%); --rank-line: rgba(215, 219, 226, 0.6); }
+.r3 { --rank: #d39a68; --rank-bg: linear-gradient(135deg, #f0c49a 0%, #c98a55 55%, #8f5a2e 100%); --rank-line: rgba(211, 154, 104, 0.65); }
+.rank-summary { list-style: none; margin: 0 0 18px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.rank-summary li {
+  display: flex; align-items: center; gap: 10px; min-width: 0; padding: 8px 12px;
+  border: 1px dashed var(--border); border-radius: var(--radius-md); background: rgba(0, 0, 0, 0.2);
+}
+.rank-summary li.is-set { border-style: solid; border-color: var(--rank-line); background: rgba(210, 175, 87, 0.06); }
+.rank-summary li:nth-child(1) { --rank-line: rgba(210, 175, 87, 0.75); }
+.rank-summary li:nth-child(2) { --rank-line: rgba(215, 219, 226, 0.6); }
+.rank-summary li:nth-child(3) { --rank-line: rgba(211, 154, 104, 0.65); }
+.rank-medal {
+  flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  font: 600 13px/1 var(--font-sans); color: var(--on-gold); background: var(--rank-bg);
+}
+.rank-name { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-pts { flex: none; font-size: 12px; color: var(--ink-muted); }
+.rank-badge {
+  position: absolute; z-index: 2; top: 10px; right: 10px; width: 40px; height: 40px; border-radius: 50%;
+  display: grid; place-items: center; font: 600 16px/1 var(--font-sans); color: var(--on-gold);
+  background: var(--rank-bg); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+.nom-card.rank-1 { border-color: rgba(210, 175, 87, 0.8); }
+.nom-card.rank-2 { border-color: rgba(215, 219, 226, 0.6); box-shadow: 0 0 26px rgba(215, 219, 226, 0.18); }
+.nom-card.rank-3 { border-color: rgba(211, 154, 104, 0.65); box-shadow: 0 0 26px rgba(211, 154, 104, 0.2); }
+.rank-btns { display: flex; gap: 6px; justify-content: center; margin: 12px 16px 16px; }
+.rank-btn {
+  flex: 1; max-width: 64px; min-height: 40px; border-radius: 999px; cursor: pointer;
+  font: 600 14px/1 var(--font-sans); color: var(--rank); background: transparent; border: 1px solid var(--rank-line);
+  transition: background .15s, color .15s, box-shadow .15s;
+}
+.rank-btn:hover { background: rgba(255, 255, 255, 0.06); }
+.rank-btn:focus-visible { outline: 2px solid var(--gold-light); outline-offset: 2px; }
+.rank-btn.is-on { background: var(--rank-bg); color: var(--on-gold); border-color: transparent; box-shadow: 0 0 16px var(--rank-line); }
+.rank-split { margin-top: 4px; white-space: nowrap; }
+@media (max-width: 560px) {
+  .rank-btns { margin: 10px 8px 12px; gap: 4px; }
+  .rank-btn { min-height: 38px; font-size: 13px; }
+  .rank-badge { width: 32px; height: 32px; font-size: 13px; top: 8px; right: 8px; }
+  .rank-summary { grid-template-columns: 1fr; gap: 6px; }
+}
+.rank-badge + .nom-tag { left: 10px; transform: none; }
+@media (max-width: 520px) { .stepper li b { font-size: 10px; letter-spacing: -0.01em; } }
+@media (max-width: 380px) { .stepper li b { font-size: 9px; letter-spacing: -0.03em; } }
