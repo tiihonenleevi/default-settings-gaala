@@ -643,10 +643,14 @@ function notifyPanel() {
 function discordMd(text) {
   return text.split('\n').map((line) => {
     const small = line.startsWith('-# ');
-    let h = esc(small ? line.slice(3) : line)
+    const li = !small && line.startsWith('- ');
+    let h = esc(small ? line.slice(3) : li ? line.slice(2) : line)
+      // Discordin \-suojatut merkit (esim. \* nimessä) näkyvät sellaisinaan eivätkä muotoile tekstiä
+      .replace(/\\([\\*_~`|>#[\]()-])/g, (m, c) => `&#${c.charCodeAt(0)};`)
       .replace(/&lt;@&amp;\d+&gt;/g, '<span class="dc-mention">@Gaala-jäsenet</span>')
       .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
       .replace(/\*(.+?)\*/g, '<i>$1</i>');
+    if (li) return `<span class="dc-li">${h}</span>`;
     return small ? `<small class="dc-sub">${h}</small>` : h;
   }).join('<br>');
 }
@@ -659,8 +663,8 @@ function bulletinPanel() {
     <form class="panel notify-panel" id="bulletin-form">
       <p class="eyebrow">Julkinen päivittäinen tiedote</p>
       <p class="small" style="margin:0">${b.set
-        ? `<b class="notify-on">● Käytössä.</b> Tiedote lähtee osallistujien kanavalle ${b.time ? `joka päivä klo ${esc(b.time)}` : 'vain käsin (kellonaika tyhjä)'} vaiheissa 1–4.${b.lastSent ? ` Viimeksi lähetetty ${fmtTime(b.lastSent)}.` : ''}`
-        : '<b class="notify-off">● Pois päältä.</b> Virallinen kaksikielinen tiedote osallistujien kanavalle: montako on lyönyt vaiheen lukkoon ja paljonko aikaa on jäljellä. Ei nimiä.'}</p>
+        ? `<b class="notify-on">● Käytössä.</b> Tiedote lähtee osallistujien kanavalle ${b.time ? `joka päivä klo ${esc(b.time)}` : 'vain käsin (kellonaika tyhjä)'} vaiheissa 1–5.${b.lastSent ? ` Viimeksi lähetetty ${fmtTime(b.lastSent)}.` : ''}`
+        : '<b class="notify-off">● Pois päältä.</b> Virallinen kaksikielinen tiedote osallistujien kanavalle: montako on lyönyt vaiheen lukkoon, ketkä eivät vielä ole ja paljonko aikaa on jäljellä.'}</p>
       <div class="field"><label for="b-url">${b.set ? 'Vaihda osallistujien kanavan webhook' : 'Osallistujien kanavan webhook-osoite'}</label>
         <input class="input" id="b-url" type="password" autocomplete="off" spellcheck="false" placeholder="https://discord.com/api/webhooks/…" data-keep>
         <span class="small muted">Eri webhook kuin adminien ilmoituksissa: tee se kanavalle, jonka gaalaosallistujat näkevät.</span></div>
@@ -671,6 +675,7 @@ function bulletinPanel() {
         <div class="field"><label for="b-time">Lähetysaika joka päivä klo</label>
           <input class="input" id="b-time" type="time" style="max-width:200px" value="${esc(b.time || '')}">
           <span class="small muted">Tyhjä = ei automaattista lähetystä, vain "Lähetä nyt".</span></div>
+        <label class="check small" style="grid-column:1/-1"><input type="checkbox" id="b-names" ${b.names !== false ? 'checked' : ''}> Listaa tiedotteessa lukitsemattomien nimet (ei, jos kukaan ei ole vielä lukinnut)</label>
       </div>
       <div class="row" style="gap:10px;flex-wrap:wrap">
         <button class="btn btn--secondary btn--sm" type="submit">Tallenna tiedoteasetukset</button>
@@ -2493,7 +2498,7 @@ document.addEventListener('submit', async (e) => {
     } else if (f.id === 'award-base-form') {
       await api('POST', '/api/admin/settings', { awardBaseUrl: v('aw-base') });
     } else if (f.id === 'bulletin-form') {
-      const body = { roleId: v('b-role'), time: v('b-time') };
+      const body = { roleId: v('b-role'), time: v('b-time'), names: !!document.getElementById('b-names')?.checked };
       const url = v('b-url');
       if (url) body.webhook = url;
       await api('POST', '/api/admin/bulletin-settings', body);

@@ -465,7 +465,7 @@ function adminView() {
     awards: awardsAdmin(),
     // Discord-ilmoitukset: osoitetta ei koskaan lähetetä selaimeen, vain tieto siitä, onko se asetettu
     notify: { set: !!webhookUrl(), fromEnv: !db.settings.discordWebhook && !!process.env.DISCORD_WEBHOOK, kinds: Object.fromEntries(Object.keys(NOTIFY_KINDS).map((k) => [k, notifyOn(k)])), reminderTime: reminderTime() },
-    bulletin: { set: !!db.settings.publicWebhook, roleId: db.settings.publicRoleId || '', time: bulletinTime(), lastSent: db.settings.bulletinLastSent || '' },
+    bulletin: { set: !!db.settings.publicWebhook, roleId: db.settings.publicRoleId || '', time: bulletinTime(), names: bulletinNamesOn(), lastSent: db.settings.bulletinLastSent || '' },
     rankCats: rankNeed(null).filter((x) => x.need > 0).length,
     voters: { p1: new Set(db.categories.filter((c) => c.by).map((c) => c.by)).size, p2: new Set(db.catVotes.map((v) => v.userId)).size, p3: new Set(db.nominees.filter((n) => n.by).map((n) => n.by)).size, p4: Object.keys(db.nomRanks).filter((uid) => db.users[uid] && advancedCats().some((c) => myRanking(uid, c.id).some(Boolean))).length, p5: Object.keys(db.finalVotes).length },
     locked: Object.values(db.users).filter((u) => !u.root && !u.tester && isLocked(u)).length,
@@ -1542,8 +1542,13 @@ setInterval(safeTick, 60 * 1000).unref();
 // ---------- Julkinen päivittäinen tiedote ----------
 // Toinen webhook gaalaosallistujien kanavalle: kerran päivässä virallinen kaksikielinen tiedote siitä, montako on
 // lyönyt vaiheen lukkoon ja paljonko aikaa vaiheen loppuun on. Rooli (esim. @Gaala-jäsenet) pingataan vain, jos
-// sen ID on asetettu. Mukana ei ole nimiä: lukitsemattomien nimet menevät vain adminien kanavalle.
+// sen ID on asetettu. Lukitsemattomien nimet listataan kummankin kielen kappaleen perään (asetus bulletinNames,
+// oletuksena päällä). Jos kukaan ei ole vielä lukinnut, listaa ei näytetä (siinä olisivat kaikki).
 function bulletinTime() { return db.settings.bulletinTime ?? '12:00'; }
+const bulletinNamesOn = () => db.settings.bulletinNames !== false;
+// Discordin muotoilumerkit nimissä (*, _, ~ jne.) näytetään sellaisinaan eikä muotoiluna
+const mdEscape = (t) => String(t).replace(/([\\*_~`|>#\[\]()-])/g, '\\$1');
+const DISCORD_MAX = 2000;
 const PHASE_EN = { 1: 'Category Suggestions', 2: 'Category Voting', 3: 'Nominee Suggestions', 4: 'Nominee Voting', 5: 'Final' };
 const PHASE_IN_FI = { 1: 'kategorioiden ehdotusvaiheessa', 2: 'kategorioiden äänestysvaiheessa', 3: 'ehdokkaiden ehdotusvaiheessa', 4: 'ehdokkaiden äänestysvaiheessa', 5: 'finaalivaiheessa' };
 const PHASE_NOM_FI = { 1: 'kategorioiden ehdotusvaihe', 2: 'kategorioiden äänestysvaihe', 3: 'ehdokkaiden ehdotusvaihe', 4: 'ehdokkaiden äänestysvaihe', 5: 'finaalivaihe' };
@@ -1575,7 +1580,8 @@ function bulletinWhen(end) {
 function bulletinText() {
   const ph = db.settings.phase;
   if (ph < 1 || ph > LAST_OPEN) return null;
-  const total = voters().length; const missing = unlockedVoters(ph).length; const locked = total - missing;
+  const missingUsers = unlockedVoters(ph).sort((a, b) => a.name.localeCompare(b.name, 'fi'));
+  const total = voters().length; const missing = missingUsers.length; const locked = total - missing;
   const role = db.settings.publicRoleId ? `<@&${db.settings.publicRoleId}>` : 'Gaala-jäsenet';
   const [whatFi, whatEn] = PHASE_WHAT[ph];
   const when = bulletinWhen((db.settings.phaseEnds || {})[ph]);
@@ -1590,14 +1596,23 @@ function bulletinText() {
     fi = `Gaalan hallitus tiedottaa, että ${PHASE_IN_FI[ph]} ${locked}/${total} jäsentä on jo lyönyt ${whatFi} lukkoon. Hallitus kiittää lämpimästi kaikkia jo lukinneita ja muistuttaa kunnioittavasti, että ${missing} ${missing === 1 ? 'jäsen ei ole' : 'jäsentä ei ole'} vielä tehnyt niin. ${when.fi} Jos valintanne ovat vielä viimeistelyä vailla, käyttehän lyömässä ne lukkoon, kun vielä kerkeätte.`;
     en = `The Gaala Administration wishes to inform you that in the ${PHASE_EN[ph]} phase, ${locked} of ${total} members have already locked in their ${whatEn}. The Administration warmly thanks everyone who has done so and respectfully reminds the remaining ${missing} ${missing === 1 ? 'member' : 'members'} to follow suit. ${when.en} If your choices still need a finishing touch, please be sure to lock them in while you still have the chance.`;
   }
-  return [
-    `Arvoisat ${role}!`, '', fi, '',
+  const build = (list) => [
+    `Arvoisat ${role}!`, '', fi, ...list, '',
     '**Same in English for our international people:**', '',
-    `Esteemed ${role}!`, '', en, '',
+    `Esteemed ${role}!`, '', en, ...list, '',
     // allekirjoitus kursiivilla rivi kerrallaan (Discordin *…* ei aina jatku rivinvaihdon yli)
     '*The Gaala Administration,*', '*by order of the HerrasmiesKlubi Council,*', '*under the gracious patronage of Default Settings Oy*', '',
     '-# Tämä on automaattinen viesti. / This is an automated message.',
   ].join('\n');
+  if (!bulletinNamesOn() || !missing || !locked) return build([]);
+  // Nimet luettelona. Jos viesti menisi yli Discordin 2000 merkin rajan, nimet pilkuilla yhdelle riville,
+  // ja jos sekään ei mahdu, tiedote lähtee ilman nimiä (Discord hylkäisi liian pitkän viestin kokonaan).
+  const names = missingUsers.map((u) => mdEscape(u.name));
+  for (const list of [names.map((n) => `- ${n}`), [names.join(', ')]]) {
+    const text = build(['', ...list]);
+    if (text.length <= DISCORD_MAX) return text;
+  }
+  return build([]);
 }
 
 async function sendBulletin() {
@@ -1640,15 +1655,16 @@ route('POST', '/api/admin/bulletin-settings', ({ user, body }) => {
     if (t && !/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) fail(400, 'Kellonaika on virheellinen (esim. 12:00).');
     s.bulletinTime = t;
   }
+  if ('names' in body) s.bulletinNames = !!body.names;
   writeDb();
   return { ...stateFor(user), notice: 'Tiedoteasetukset tallennettu.' };
 }, { admin: true });
 
-route('GET', '/api/admin/bulletin-preview', () => ({ text: bulletinText() || 'Tiedotetta ei lähetetä vaiheessa 5 (äänestys suljettu).' }), { admin: true });
+route('GET', '/api/admin/bulletin-preview', () => ({ text: bulletinText() || 'Tiedotetta ei lähetetä vaiheessa 6 (äänestys suljettu).' }), { admin: true });
 
 route('POST', '/api/admin/bulletin-send', async ({ user }) => {
   if (!db.settings.publicWebhook) fail(400, 'Aseta ensin osallistujien kanavan webhook.');
-  if (!bulletinText()) fail(409, 'Tiedotetta ei lähetetä vaiheessa 5 (äänestys suljettu).');
+  if (!bulletinText()) fail(409, 'Tiedotetta ei lähetetä vaiheessa 6 (äänestys suljettu).');
   let r;
   try { r = await sendBulletin(); } catch (e) { fail(502, `Discordiin ei saatu yhteyttä: ${(e && e.message) || e}`); }
   if (r.status === 401 || r.status === 404) fail(400, 'Discord ei tunnista webhookia. Onko se poistettu? Luo uusi ja tallenna se.');

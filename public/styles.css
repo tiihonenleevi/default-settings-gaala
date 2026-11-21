@@ -982,6 +982,8 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 .bulletin-text b { font-weight: 600; }
 .bulletin-text .dc-mention { color: #f0a35e; background: rgba(240, 163, 94, 0.15); border-radius: 3px; padding: 0 2px; }
 .bulletin-text .dc-sub { font-size: 12px; color: #9a9ca3; }
+.bulletin-text .dc-li { display: inline-block; padding-left: 18px; position: relative; }
+.bulletin-text .dc-li::before { content: "•"; position: absolute; left: 4px; }
 .bulletin-preview pre { margin: 0; padding: 14px 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.55 var(--font-sans); color: var(--ink); background: rgba(0, 0, 0, 0.35); border: 1px solid var(--border); border-radius: var(--radius-md); max-height: 520px; overflow-y: auto; }
 /* ---------- Palkintosivu (pokaalin QR-koodi) ---------- */
 .award-page { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
