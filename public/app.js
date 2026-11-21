@@ -20,6 +20,12 @@ let hofDraft = null; // Hall of Fame -lomakkeen luonnos: { id, year, categories,
 const versionsOpen = new Set(); // henkilöt, joiden kuvaversiot on avattu näkyviin
 let previewVersion = null; // esikatseltavan kuvaversion id
 
+// Palkintosivu (pokaalin QR-koodi): /p/<tunniste>. Näkyy ilman kirjautumista, eikä se käytä muuta sovellusta.
+const AWARD_TOKEN = (/^\/p\/([A-Za-z0-9_-]{10})\/?$/.exec(location.pathname) || [])[1] || null;
+let award = null; // palvelimen palauttama palkintosivu tai { error }
+// Hall of Famesta pääsee takaisin palkintosivulle, jos sinne tultiin palkintosivulta (sama välilehti)
+const awardBack = () => { try { const u = sessionStorage.getItem('awardBack'); return /^\/p\/[A-Za-z0-9_-]{10}$/.test(u || '') ? u : null; } catch { return null; } };
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -69,6 +75,7 @@ function render() {
   const active = document.activeElement && document.activeElement.id;
   const sel = active && document.activeElement.selectionStart != null ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
 
+  if (AWARD_TOKEN) { app.innerHTML = awardPage(); return; }
   app.innerHTML = state.me ? mainView() : loginView();
 
   for (const [id, v] of Object.entries(kept)) { const el = document.getElementById(id); if (el && v) el.value = v; }
@@ -164,6 +171,162 @@ function hofVisibility() {
     </div>`;
 }
 
+// ---------- Palkintosivu (pokaalin QR-koodi) ----------
+async function loadAward() {
+  try {
+    const res = await fetch(`/api/award/${AWARD_TOKEN}`, { credentials: 'same-origin' });
+    const data = await res.json().catch(() => ({}));
+    award = res.ok ? data : { error: data.error || 'Palkintosivua ei löydy.' };
+  } catch { award = award || { error: 'Yhteys ei toimi juuri nyt. Yritä hetken päästä uudelleen.' }; }
+  document.title = award && award.name ? `${award.name} · HerrasmiesKlubi Gaala` : 'HerrasmiesKlubi Gaala';
+  render();
+}
+
+const PLACE_LABEL = { 1: '1. sija', 2: '2. sija', 3: '3. sija' };
+// Palkintokorokkeen järjestys: 2. vasemmalla, 1. keskellä korkeimmalla, 3. oikealla
+function awardPage() {
+  const a = award;
+  if (!a) return `<div class="award-page"><main class="wrap award-main"><p class="muted">Ladataan…</p></main></div>`;
+  if (a.error) return `<div class="award-page"><main class="wrap award-main">${brand()}<h1 class="h1" style="margin-top:32px">${esc(a.error)}</h1></main>${footer()}</div>`;
+  const col = (pl) => {
+    const list = a.published ? a.places.filter((x) => x.place === pl) : [{ hidden: true }];
+    if (!list.length) return `<div class="podium-col place-${pl} is-empty" aria-hidden="true"></div>`;
+    return `
+      <div class="podium-col place-${pl}">
+        <p class="podium-place">${PLACE_LABEL[pl]}</p>
+        ${list.map((x) => x.hidden ? `
+        <article class="nom-card podium-card is-secret" aria-label="${PLACE_LABEL[pl]}: julkistetaan Gaalassa">
+          <div class="nom-media"><div class="nom-mono"><span>?</span></div></div>
+          <div class="nom-body"><h2 class="h3">Julkistetaan Gaalassa</h2></div>
+        </article>` : `
+        <article class="nom-card podium-card">
+          <div class="nom-media">${portrait(x)}</div>
+          <div class="nom-body"><h2 class="h3">${esc(x.name)}</h2>${x.reason ? `<p>${esc(x.reason)}</p>` : ''}</div>
+        </article>`).join('')}
+      </div>`;
+  };
+  const hofHref = `/#hall-of-fame${a.archived ? '/' + a.year : ''}`;
+  return `
+  <div class="award-page">
+    <header class="award-top">${brand()}</header>
+    <main class="wrap award-main">
+      <header class="award-head">
+        <p class="eyebrow">Gaala ${a.year}</p>
+        <h1 class="display award-title">${esc(a.name)}</h1>
+        ${a.description ? `<p class="lead">${esc(a.description)}</p>` : ''}
+        ${a.published ? '' : '<p class="award-wait">Voittaja julkistetaan Gaalassa.</p>'}
+      </header>
+      <div class="podium${a.published ? '' : ' is-waiting'}">${col(2)}${col(1)}${col(3)}</div>
+      <div class="award-actions">
+        <a class="btn btn--secondary" href="${hofHref}" data-act="award-hof">Hall of Fame · kaikki voittajat</a>
+        ${a.loggedIn ? '' : '<p class="small muted" style="margin:0">Hall of Fame näkyy Gaalan jäsenille kirjautumisen jälkeen.</p>'}
+      </div>
+    </main>
+    ${footer()}
+  </div>`;
+}
+
+// Hallinta: palkintosivujen linkit ja QR-koodit pokaaleihin
+let awardEdit = null; // kategorian id, jonka sijoja muokataan käsin
+function awardBase() { return (state.admin.awards && state.admin.awards.baseUrl) || location.origin; }
+const awardUrl = (token) => `${awardBase()}/p/${token}`;
+
+// QR-koodi SVG:nä (qrcode-generator, ladataan vain hallinnassa). Musta valkoisella ja leveä reunus, jotta
+// koodi lukeutuu varmasti myös pienenä pokaalin pohjassa.
+let qrLib = null;
+function qrSvg(text, size = 132) {
+  if (!qrLib) return `<div class="qr-box qr-loading" style="width:${size}px;height:${size}px"></div>`;
+  const qr = qrLib(0, 'M'); qr.addData(text); qr.make();
+  const n = qr.getModuleCount(); const m = 4; let d = '';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) d += `M${c + m} ${r + m}h1v1h-1z`;
+  return `<svg class="qr-box" viewBox="0 0 ${n + 2 * m} ${n + 2 * m}" width="${size}" height="${size}" shape-rendering="crispEdges" role="img" aria-label="QR-koodi: ${esc(text)}"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+function ensureQrLib() {
+  if (qrLib) return;
+  loadScript('/vendor/qrcode.js', 'qrcode').then((q) => { qrLib = q; render(); }).catch(() => toast('QR-kirjaston lataus epäonnistui.', true));
+}
+// PNG tulostusta varten: 1200 px, nimi tiedostonimessä
+function downloadQrPng(text, name) {
+  const qr = qrLib(0, 'M'); qr.addData(text); qr.make();
+  const n = qr.getModuleCount(); const m = 4; const px = Math.floor(1200 / (n + 2 * m));
+  const c = document.createElement('canvas'); c.width = c.height = px * (n + 2 * m);
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.fillStyle = '#000';
+  for (let r = 0; r < n; r++) for (let cc = 0; cc < n; cc++) if (qr.isDark(r, cc)) g.fillRect((cc + m) * px, (r + m) * px, px, px);
+  c.toBlob((blob) => {
+    const link = document.createElement('a');
+    link.download = `QR ${name.replace(/[\\/:*?"<>|]+/g, '')}.png`; link.href = URL.createObjectURL(blob);
+    document.body.appendChild(link); link.click(); link.remove(); // linkki sivulla, jotta tiedostonimi säilyy
+    setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+  }, 'image/png');
+}
+// Tulostettava arkki: kaikki QR-koodit kategorioiden nimillä
+function printQrSheet(items, title) {
+  const w = window.open('', '_blank');
+  if (!w) return toast('Salli ponnahdusikkunat tulostusta varten.', true);
+  w.document.write(`<!doctype html><html lang="fi"><head><meta charset="utf-8"><title>${esc(title)}</title><style>
+    body{font-family:system-ui,sans-serif;margin:24px;color:#000}h1{font-size:18px;margin:0 0 16px}
+    .g{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}.i{border:1px dashed #999;padding:12px;text-align:center;break-inside:avoid}
+    .i svg{width:42mm;height:42mm}.n{font-weight:600;margin-top:8px}.u{font-size:9px;color:#555;word-break:break-all}
+    @media print{body{margin:10mm}}</style></head><body><h1>${esc(title)}</h1><div class="g">
+    ${items.map((x) => `<div class="i">${qrSvg(awardUrl(x.token), 160)}<div class="n">${esc(x.name)}</div><div class="u">${esc(awardUrl(x.token))}</div></div>`).join('')}
+    </div><script>window.onload=()=>setTimeout(()=>window.print(),200)<\/script></body></html>`);
+  w.document.close();
+}
+
+function awardsPanel() {
+  const A = state.admin.awards;
+  if (!A || (!A.current.length && !A.archived.length)) return '';
+  ensureQrLib();
+  const placesTxt = (pl) => (pl.length ? pl.map((x) => `${x.place}. ${esc(x.name)}`).join(' · ') : '<span class="muted">Ei vielä sijoja (finaaliääniä ei ole).</span>');
+  const item = (x, cur) => `
+      <div class="award-item">
+        <a href="${esc(awardUrl(x.token))}" target="_blank" rel="noopener" title="Avaa palkintosivu">${qrSvg(awardUrl(x.token))}</a>
+        <div class="award-item-body">
+          <h4 class="h3" style="margin:0">${esc(x.name)}</h4>
+          <p class="small" style="margin:0">${placesTxt(x.places)}${cur && x.manual ? ' <span class="tag">käsin</span>' : ''}</p>
+          <p class="small muted award-url" style="margin:0">${esc(awardUrl(x.token))}</p>
+          <div class="row" style="gap:4px;flex-wrap:wrap;margin-left:-10px">
+            <a class="btn btn--ghost" href="${esc(awardUrl(x.token))}" target="_blank" rel="noopener">Avaa sivu</a>
+            <button class="btn btn--ghost" type="button" data-act="award-png" data-token="${x.token}" data-name="${esc(x.name)}">Lataa QR (PNG)</button>
+            ${cur ? `<button class="btn btn--ghost" type="button" data-act="award-edit" data-id="${x.id}">${awardEdit === x.id ? 'Sulje sijat' : 'Muokkaa sijoja'}</button>` : ''}
+          </div>
+          ${cur && awardEdit === x.id ? `
+          <div class="award-places-edit">
+            ${x.finalists.map((f) => `<label class="row" style="gap:10px;align-items:center"><select class="input" style="max-width:110px" data-award-place="${f.id}">
+              <option value="">–</option>${[1, 2, 3].map((pl) => `<option value="${pl}" ${(x.manual ? f.place : (x.places.find((p) => p.name === f.name) || {}).place) === pl ? 'selected' : ''}>${pl}. sija</option>`).join('')}</select>
+              <span>${esc(f.name)} <span class="muted small">(${f.votes} ${f.votes === 1 ? 'ääni' : 'ääntä'})</span></span></label>`).join('')}
+            <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn btn--secondary btn--sm" type="button" data-act="award-places-save" data-id="${x.id}">Tallenna sijat</button>
+            ${x.manual ? `<button class="btn btn--ghost" type="button" data-act="award-places-reset" data-id="${x.id}">Laske äänistä</button>` : ''}</div>
+          </div>` : ''}
+        </div>
+      </div>`;
+  return `
+    <div class="panel awards-panel">
+      <p class="eyebrow">Palkintosivut ja QR-koodit</p>
+      <p class="small" style="margin:0">Jokaisella kategorialla on oma palkintosivu, jonka QR-koodin voi tulostaa pokaalin pohjaan. Sivu näkyy ilman kirjautumista, mutta sinne ei ole linkkiä muualta sivustolta. Sijat 1.–3. tulevat finaalin äänistä (tasapelissä sama sija), ja niitä voi korjata käsin.</p>
+      <div class="row award-publish" style="gap:12px;flex-wrap:wrap;align-items:center">
+        <b class="${A.published ? 'notify-on' : 'notify-off'}">● ${A.published ? 'Tulokset näkyvät palkintosivuilla.' : 'Tulokset piilossa: sivuilla lukee "Voittaja julkistetaan Gaalassa".'}</b>
+        <button class="btn btn--sm ${A.published ? 'btn--secondary' : 'btn--primary'}" type="button" data-act="awards-publish">${A.published ? 'Piilota tulokset' : 'Julkaise tulokset'}</button>
+      </div>
+      <form class="row award-base" id="award-base-form" style="gap:10px;flex-wrap:wrap;align-items:end">
+        <div class="field" style="flex:1 1 280px"><label for="aw-base">QR-koodien osoite</label><input class="input" id="aw-base" value="${esc(A.baseUrl || location.origin)}" placeholder="https://…"><span class="small muted">Osoite, jolla sivu aukeaa kaikille (Funnelin osoite). Tarkista ennen tulostamista.</span></div>
+        <button class="btn btn--ghost" type="submit">Tallenna osoite</button>
+      </form>
+      ${A.current.length ? `
+      <div class="award-group">
+        <div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><h3 class="h3" style="margin:0">Gaala ${new Date().getFullYear()}</h3>
+          <button class="btn btn--ghost" type="button" data-act="award-print" data-year="">Tulosta kaikki QR-koodit</button></div>
+        <div class="award-list">${A.current.map((x) => item(x, true)).join('')}</div>
+      </div>` : ''}
+      ${A.archived.map((y) => `
+      <details class="award-group">
+        <summary class="h3">Hall of Fame ${y.year} <span class="small muted">(${y.categories.length})</span></summary>
+        <div class="row" style="justify-content:flex-end"><button class="btn btn--ghost" type="button" data-act="award-print" data-year="${y.year}">Tulosta vuoden ${y.year} QR-koodit</button></div>
+        <div class="award-list">${y.categories.map((x) => item(x, false)).join('')}</div>
+      </details>`).join('')}
+    </div>`;
+}
+
 // ---------- Hall of Fame ----------
 // Aiemmat Gaalat uusin ensin: jokaisesta kategoriasta voittaja isona korttina ja muut ehdokkaat pienempinä.
 function hofView() {
@@ -174,7 +337,7 @@ function hofView() {
       <p class="eyebrow">Hall of Fame</p>
       <h1 class="h1">Edellisten vuosien voittajat</h1>
       <p class="lead">${years.length > 1 ? `HerrasmiesKlubi Gaala vuodesta ${years[years.length - 1].year} lähtien.` : 'Täällä elävät aiempien Gaalojen voittajat ja ehdokkaat.'}</p>
-      <div><button class="btn btn--secondary btn--sm" data-act="hof-close">Takaisin Gaalaan</button></div>
+      <div class="row" style="justify-content:center;gap:10px;flex-wrap:wrap">${awardBack() ? `<a class="btn btn--primary btn--sm" href="${esc(awardBack())}">← Takaisin palkintosivulle</a>` : ''}<button class="btn btn--secondary btn--sm" data-act="hof-close">Takaisin Gaalaan</button></div>
     </header>
     ${admin && s.admin ? hofVisibility() : ''}
     ${years.length ? hofTabs(years) : `<div class="empty">${admin ? 'Hall of Fame on vielä tyhjä. Lisää viime vuoden Gaala alta.' : 'Hall of Fame julkaistaan myöhemmin.'}</div>`}
@@ -226,7 +389,7 @@ function hofYear(y) {
     ${y.cover && y.cover.photo ? `<figure class="hof-cover"><img src="${y.cover.photo.src}" alt="Gaala ${y.year}" loading="lazy" style="${cropStyle(y.cover.photo)}"></figure>` : ''}
     ${y.categories.map((c) => {
       const wins = c.nominees.filter((x) => x.winner);
-      const rest = c.nominees.filter((x) => !x.winner);
+      const rest = c.nominees.filter((x) => !x.winner).sort((a, b) => (a.place || 9) - (b.place || 9));
       return `
       <article class="hof-cat">
         <header class="cat-head">
@@ -242,7 +405,7 @@ function hofYear(y) {
         ${rest.length ? `<div class="hof-rest">
           <p class="eyebrow">${wins.length ? 'Muut ehdokkaat' : 'Ehdokkaat'}</p>
           <ul class="hof-noms">${rest.map((x) => `
-            <li>${portrait(x, 'person-photo')}<span><b>${esc(x.name)}</b>${x.reason ? `<span class="small muted">${esc(x.reason)}</span>` : ''}</span></li>`).join('')}
+            <li>${portrait(x, 'person-photo')}<span><b>${esc(x.name)}</b>${x.place ? ` <span class="place-tag place-${x.place}">${x.place}. sija</span>` : ''}${x.reason ? `<span class="small muted">${esc(x.reason)}</span>` : ''}</span></li>`).join('')}
           </ul>
         </div>` : ''}
       </article>`;
@@ -253,9 +416,9 @@ function hofYear(y) {
 // ---------- Hall of Fame -lomake ----------
 // Luonnos pidetään muistissa ja päivitetään jokaisella näppäilyllä, joten taustapäivitys (render) ei hävitä sitä.
 // key: rivin pysyvä tunniste (kuvan lataus osuu oikealle riville, vaikka rivejä poistettaisiin latauksen aikana)
-const hofNominee = (n = {}) => ({ key: 'r' + Math.random().toString(36).slice(2, 10), personId: n.personId || '', name: n.name || '', reason: n.reason || '', winner: !!n.winner, other: !!(n.name && !n.personId), image: n.image || null, src: n.imageSrc || null, crop: n.crop || null });
+const hofNominee = (n = {}) => ({ key: 'r' + Math.random().toString(36).slice(2, 10), personId: n.personId || '', name: n.name || '', reason: n.reason || '', place: n.place || (n.winner ? 1 : 0), other: !!(n.name && !n.personId), image: n.image || null, src: n.imageSrc || null, crop: n.crop || null });
 const hofRow = (key) => { for (const c of hofDraft ? hofDraft.categories : []) for (const n of c.nominees) if (n.key === key) return n; return null; };
-const hofCategory = (c = {}) => ({ name: c.name || '', description: c.description || '', nominees: c.nominees && c.nominees.length ? c.nominees.map(hofNominee) : [hofNominee(), hofNominee(), hofNominee()] });
+const hofCategory = (c = {}) => ({ name: c.name || '', description: c.description || '', awardToken: c.awardToken || null, nominees: c.nominees && c.nominees.length ? c.nominees.map(hofNominee) : [hofNominee(), hofNominee(), hofNominee()] });
 
 function openHofDraft(id) {
   const y = (state.hallOfFame || []).find((x) => x.id === id);
@@ -273,7 +436,7 @@ function hofNomRow(n, ci, ni, people) {
   const person = people.find((p) => p.id === n.personId);
   const label = person ? person.name : n.name;
   return `
-  <div class="hof-edit-nom${n.winner ? ' is-winner' : ''}" data-drop-target="hof" data-drop-id="${n.key}">
+  <div class="hof-edit-nom${n.place === 1 ? ' is-winner' : ''}" data-drop-target="hof" data-drop-id="${n.key}">
     <div class="hof-edit-pic">
       <button type="button" class="hof-pic-btn" data-act="photo-pick" data-target="hof" data-id="${n.key}" title="${n.src ? 'Vaihda kuva' : 'Lisää kuva'}" aria-label="${n.src ? 'Vaihda kuva' : 'Lisää kuva'}: ehdokas ${ni + 1}">
         ${n.src ? portrait({ name: label || '?', photo: { src: n.src, ...(n.crop || {}) } }, 'person-photo') : '<span class="person-photo hof-pic-empty" aria-hidden="true">+</span>'}
@@ -291,7 +454,10 @@ function hofNomRow(n, ci, ni, people) {
     </div>
     <label class="sr-only" for="hr-${k}">Mistä</label>
     <input class="input" id="hr-${k}" data-hof="reason" data-ci="${ci}" data-ni="${ni}" value="${esc(n.reason)}" maxlength="160" placeholder="Mistä? (valinnainen)">
-    <label class="hof-win-toggle" title="Merkitse voittajaksi"><input type="checkbox" id="hw-${k}" data-hof="winner" data-ci="${ci}" data-ni="${ni}" ${n.winner ? 'checked' : ''}><span>★ Voittaja</span></label>
+    <label class="hof-win-toggle hof-place${n.place ? ' has-place' : ''}${n.place === 1 ? ' is-first' : ''}" title="Sija palkintosivulla (1. = voittaja)"><span aria-hidden="true">Sija</span>
+      <select id="hw-${k}" data-hof="place" data-ci="${ci}" data-ni="${ni}" aria-label="Sija, ehdokas ${ni + 1}">
+        <option value="">–</option>${[1, 2, 3].map((pl) => `<option value="${pl}" ${n.place === pl ? 'selected' : ''}>${pl === 1 ? '★ 1.' : pl + '.'}</option>`).join('')}
+      </select></label>
     <button class="btn btn--ghost hof-x" type="button" data-act="hof-nom-del" data-ci="${ci}" data-ni="${ni}" aria-label="Poista ehdokas ${ni + 1}" title="Poista ehdokas">✕</button>
   </div>`;
 }
@@ -1040,6 +1206,8 @@ function adminView() {
 
     ${bulletinPanel()}
 
+    ${awardsPanel()}
+
     <div style="display:grid;gap:12px">
       <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
         <p class="eyebrow">Kategoriat · jatkoon ${advanced.length} / ${L.targetCategories}</p>
@@ -1400,7 +1568,7 @@ function hofInput(el, changed) {
   else if (f === 'cat-desc') c.description = el.value;
   else if (f === 'name') n.name = el.value;
   else if (f === 'reason') n.reason = el.value;
-  else if (f === 'winner' && changed) { n.winner = el.checked; render(); }
+  else if (f === 'place' && changed) { n.place = Number(el.value) || 0; render(); }
   else if (f === 'person' && changed) {
     n.other = el.value === '__other';
     n.personId = n.other ? '' : el.value;
@@ -1570,6 +1738,37 @@ document.addEventListener('click', async (e) => {
       break;
     case 'bulletin-remove':
       if (confirm('Poistetaanko osallistujien kanavan webhook? Päivittäiset tiedotteet loppuvat.')) await api('POST', '/api/admin/bulletin-settings', { webhook: '' }).catch(() => {});
+      break;
+    case 'award-hof': {
+      // palkintosivulta Hall of Fameen: muistetaan paluuosoite tälle välilehdelle
+      try { sessionStorage.setItem('awardBack', location.pathname); } catch {}
+      break; // linkki hoitaa siirtymän
+    }
+    case 'awards-publish': {
+      const on = !state.admin.awards.published;
+      if (!confirm(on ? 'Julkaistaanko tulokset palkintosivuilla? Kuka tahansa QR-koodin skannaava näkee sijat.' : 'Piilotetaanko tulokset palkintosivuilta?')) break;
+      await api('POST', '/api/admin/settings', { awardsPublished: on }).then(() => toast(on ? 'Tulokset julkaistu palkintosivuilla.' : 'Tulokset piilotettu.')).catch(() => {});
+      break;
+    }
+    case 'award-png':
+      if (qrLib) downloadQrPng(awardUrl(t.dataset.token), t.dataset.name);
+      break;
+    case 'award-print': {
+      if (!qrLib) break;
+      const A = state.admin.awards; const y = t.dataset.year;
+      const items = y ? (A.archived.find((x) => String(x.year) === y) || { categories: [] }).categories : A.current;
+      printQrSheet(items, y ? `HerrasmiesKlubi Gaala ${y} · palkintosivut` : 'HerrasmiesKlubi Gaala · palkintosivut');
+      break;
+    }
+    case 'award-edit': awardEdit = awardEdit === id ? null : id; render(); break;
+    case 'award-places-save': {
+      const places = {};
+      document.querySelectorAll('[data-award-place]').forEach((el) => { if (el.value) places[el.dataset.awardPlace] = Number(el.value); });
+      try { await api('POST', `/api/admin/awards/${id}/places`, { places }); awardEdit = null; render(); } catch {}
+      break;
+    }
+    case 'award-places-reset':
+      try { await api('POST', `/api/admin/awards/${id}/places`, { reset: true }); awardEdit = null; render(); } catch {}
       break;
     case 'notify-test':
       await api('POST', '/api/admin/notify-test', {}).catch(() => {});
@@ -2097,7 +2296,7 @@ document.addEventListener('submit', async (e) => {
       await api('POST', '/api/admin/hof', {
         id: d.id || undefined, year: d.year,
         cover: d.cover ? { image: d.cover.image, crop: d.cover.crop } : null,
-        categories: d.categories.map((c) => ({ name: c.name, description: c.description, nominees: c.nominees.map((n) => ({ personId: n.personId || null, name: n.other ? n.name : '', reason: n.reason, winner: n.winner, image: n.image, crop: n.crop })) })),
+        categories: d.categories.map((c) => ({ name: c.name, description: c.description, awardToken: c.awardToken, nominees: c.nominees.map((n) => ({ personId: n.personId || null, name: n.other ? n.name : '', reason: n.reason, place: n.place || null, winner: n.place === 1, image: n.image, crop: n.crop })) })),
       });
       hofDraft = null; hofYearSel = Number(d.year); syncHofUrl(false); render(); // tallennettu vuosi näkyviin
       document.querySelector('.hof-tabs, .hof-year')?.scrollIntoView({ block: 'start' });
@@ -2107,6 +2306,8 @@ document.addEventListener('submit', async (e) => {
       if (isTest()) { simulate('feedback', { text, msg: 'Palaute lähetetty.' }); clear('fb-text'); return; }
       await api('POST', '/api/feedback', { text });
       clear('fb-text');
+    } else if (f.id === 'award-base-form') {
+      await api('POST', '/api/admin/settings', { awardBaseUrl: v('aw-base') });
     } else if (f.id === 'bulletin-form') {
       const body = { roleId: v('b-role'), time: v('b-time') };
       const url = v('b-url');
@@ -2129,6 +2330,7 @@ document.addEventListener('submit', async (e) => {
 
 // Päivitä tila taustalla (ei kun käyttäjä kirjoittaa)
 setInterval(() => {
+  if (AWARD_TOKEN) { if (!document.hidden && award && !award.published) loadAward(); return; } // paljastus näkyy ilman päivitystä
   if (document.hidden || cropping || stats || isTest()) return;
   const a = document.activeElement;
   if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'radio') return;
@@ -2141,9 +2343,10 @@ setInterval(() => {
   refresh();
 })();
 }, 15000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden && !isTest()) refresh(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !isTest() && !AWARD_TOKEN) refresh(); });
 
 (async () => {
+  if (AWARD_TOKEN) return loadAward();
   const k = new URLSearchParams(location.search).get('k');
   if (k) {
     history.replaceState(null, '', location.pathname + location.hash); // Hall of Famen vuosi säilyy

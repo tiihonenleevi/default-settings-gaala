@@ -407,6 +407,7 @@ function adminView() {
       finalVoters: db.settings.phase >= 4 ? Object.entries(db.finalVotes).filter(([, v]) => v[n.categoryId] === n.id).map(([uid]) => userName(uid) || 'poistettu').sort((a, b) => a.localeCompare(b, 'fi')) : [] })),
     safeMode: !!db.settings.safeMode,
     hofPublished: !!db.settings.hofPublished,
+    awards: awardsAdmin(),
     // Discord-ilmoitukset: osoitetta ei koskaan lähetetä selaimeen, vain tieto siitä, onko se asetettu
     notify: { set: !!webhookUrl(), fromEnv: !db.settings.discordWebhook && !!process.env.DISCORD_WEBHOOK, kinds: Object.fromEntries(Object.keys(NOTIFY_KINDS).map((k) => [k, notifyOn(k)])), reminderTime: reminderTime() },
     bulletin: { set: !!db.settings.publicWebhook, roleId: db.settings.publicRoleId || '', time: bulletinTime(), lastSent: db.settings.bulletinLastSent || '' },
@@ -429,8 +430,8 @@ function hofView() {
     // Vuoden kansikuva otsikon alla (esim. ryhmäkuva gaalasta); Alle K18 -tilassa piilossa kuten muutkin kuvat
     cover: y.cover ? { image: y.cover.image, imageSrc: imgUrl(y.cover.image), crop: y.cover.crop || null, photo: db.settings.safeMode ? null : photoOf(y.cover.image, y.cover.crop) } : null,
     categories: y.categories.map((c) => ({
-      name: c.name, description: c.description || '',
-      nominees: c.nominees.map((n) => ({ name: n.name, reason: n.reason || '', winner: !!n.winner, personId: n.personId && db.users[n.personId] ? n.personId : null, image: n.image || null, imageSrc: imgUrl(n.image), crop: n.crop || null, photo: db.settings.safeMode ? null : photoOf(n.image, n.crop) })),
+      name: c.name, description: c.description || '', awardToken: c.awardToken || null,
+      nominees: c.nominees.map((n) => ({ name: n.name, reason: n.reason || '', winner: !!n.winner, place: hofPlace(n), personId: n.personId && db.users[n.personId] ? n.personId : null, image: n.image || null, imageSrc: imgUrl(n.image), crop: n.crop || null, photo: db.settings.safeMode ? null : photoOf(n.image, n.crop) })),
     })),
   }));
 }
@@ -451,12 +452,15 @@ function cleanHofCategories(list) {
       const image = typeof n.image === 'string' && IMG_NAME.test(n.image) && fs.existsSync(path.join(IMG_DIR, n.image)) ? n.image : null;
       // Rajaus säilyy vain kuvan mukana (siirrosta tulleet ehdokaskorttien kuvat); uudelle kuvalle lomake lähettää null
       const crop = image && n.crop ? cleanCrop(n.crop) : null;
-      nominees.push({ name: nName, reason: clean(n.reason, 160), personId: person ? person.id : null, winner: !!n.winner, image, crop });
+      const place = [1, 2, 3].includes(Number(n.place)) ? Number(n.place) : (n.winner ? 1 : null);
+      nominees.push({ name: nName, reason: clean(n.reason, 160), personId: person ? person.id : null, winner: place === 1, place, image, crop });
     }
     if (!name && !nominees.length) continue;
     if (!name) fail(400, 'Jokaisella kategorialla pitää olla nimi.');
     if (!nominees.length) fail(400, `Lisää kategoriaan "${name}" vähintään yksi ehdokas.`);
-    out.push({ name, description: clean(c.description, 200), nominees });
+    // Palkintosivun linkki (QR-koodi) säilyy muokatessa; uudelle kategorialle luodaan oma
+    const token = typeof c.awardToken === 'string' && AWARD_TOKEN_RE.test(c.awardToken) ? c.awardToken : newAwardToken();
+    out.push({ name, description: clean(c.description, 200), awardToken: token, nominees });
   }
   if (!out.length) fail(400, 'Lisää vähintään yksi kategoria.');
   return out;
@@ -881,12 +885,15 @@ route('POST', '/api/admin/hof/archive', ({ user, body }) => {
   db.hallOfFame = db.hallOfFame || [];
   if (db.hallOfFame.some((y) => y.year === year)) fail(409, `Vuosi ${year} on jo Hall of Famessa. Poista tai muokkaa sitä ensin.`);
   const cats = advancedCats();
-  const winners = winnersFor(cats.map((c) => c.id));
-  const categories = cats.map((c) => ({
-    name: c.name, description: c.description || '',
-    nominees: db.nominees.filter((n) => n.categoryId === c.id && n.finalist).map((n) => ({ name: nomName(n), reason: n.reason || '', personId: n.personId || null, winner: winners[c.id].includes(n.id), ...copyCardPhoto(n) }))
-      .sort((a, b) => (b.winner - a.winner) || a.name.localeCompare(b.name, 'fi')),
-  })).filter((c) => c.nominees.length);
+  // Sijat 1.–3. samalla tavalla kuin palkintosivuilla; palkintosivun linkki (QR) siirtyy kategorian mukana
+  const categories = cats.map((c) => {
+    const places = Object.fromEntries(placesFor(c).map((x) => [x.n.id, x.place]));
+    return {
+      name: c.name, description: c.description || '', awardToken: c.awardToken || newAwardToken(),
+      nominees: db.nominees.filter((n) => n.categoryId === c.id && n.finalist).map((n) => ({ name: nomName(n), reason: n.reason || '', personId: n.personId || null, winner: places[n.id] === 1, place: places[n.id] || null, ...copyCardPhoto(n) }))
+        .sort((a, b) => (a.place || 9) - (b.place || 9) || a.name.localeCompare(b.name, 'fi')),
+    };
+  }).filter((c) => c.nominees.length);
   if (!categories.length) fail(409, 'Finalisteja ei ole, joten arkistoitavaa ei ole.');
   db.hallOfFame.push({ id: newId(), year, categories, createdAt: now() });
   writeDb();
@@ -1049,6 +1056,12 @@ route('POST', '/api/admin/settings', ({ user, body }) => {
   if ('nextStart' in body) s.nextStart = clean(body.nextStart, 80);
   if ('safeMode' in body) s.safeMode = !!body.safeMode;
   if ('hofPublished' in body) s.hofPublished = !!body.hofPublished;
+  if ('awardsPublished' in body) s.awardsPublished = !!body.awardsPublished;
+  if ('awardBaseUrl' in body) {
+    const u = String(body.awardBaseUrl || '').trim().replace(/\/+$/, '');
+    if (u && !/^https?:\/\/[\w.-]+(:\d+)?$/.test(u)) fail(400, 'Osoite on muotoa https://palvelin.esimerkki.net (ilman polkua).');
+    s.awardBaseUrl = u;
+  }
   if (body.phaseEnds && typeof body.phaseEnds === 'object') {
     const ends = {};
     for (const p of [1, 2, 3, 4]) {
@@ -1215,6 +1228,111 @@ function requireUnlocked(user) {
 function requirePhase(p) {
   if (db.settings.phase !== p) fail(409, `Tämä toiminto on käytössä vain vaiheessa ${p} (${PHASES[p]}).`);
 }
+
+// ---------- Palkintosivut (QR-koodit pokaalien pohjissa) ----------
+// Jokaisella Gaalaan päässeellä kategorialla on pysyvä, arvaamaton linkki /p/<tunniste>. Sivu näkyy ilman kirjautumista:
+// ennen julkaisua vain kategorian nimi ("Voittaja julkistetaan Gaalassa"), julkaisun jälkeen sijat 1.–3. kuvineen.
+// Kun vuosi arkistoidaan Hall of Fameen, tunniste siirtyy mukana, joten pokaalin QR-koodi toimii jatkossakin.
+const AWARD_TOKEN_RE = /^[A-Za-z0-9_-]{10}$/;
+const newAwardToken = () => crypto.randomBytes(8).toString('base64url').slice(0, 10);
+const hofPlace = (n) => ([1, 2, 3].includes(n.place) ? n.place : n.winner ? 1 : null);
+function galaYear() { return Number(tzNow().date.slice(0, 4)); }
+
+// Sijat finaalin äänimääristä (tasapelissä sama sija, kilpailusijoitus 1, 1, 3). Admin voi asettaa sijat käsin.
+function placesFor(cat) {
+  const fins = db.nominees.filter((n) => n.categoryId === cat.id && n.finalist);
+  const manual = cat.awardPlaces && Object.keys(cat.awardPlaces).length ? cat.awardPlaces : null;
+  const counts = finalCounts();
+  const v = (n) => counts[n.id] || 0;
+  const list = manual
+    ? fins.map((n) => ({ n, place: [1, 2, 3].includes(manual[n.id]) ? manual[n.id] : null }))
+    : fins.map((n) => ({ n, place: v(n) ? 1 + fins.filter((m) => v(m) > v(n)).length : null }));
+  return list.filter((x) => x.place && x.place <= 3).sort((a, b) => a.place - b.place || nomName(a.n).localeCompare(nomName(b.n), 'fi'));
+}
+
+function ensureAwardTokens() {
+  let changed = false;
+  for (const c of advancedCats()) if (!c.awardToken) { c.awardToken = newAwardToken(); changed = true; }
+  for (const y of db.hallOfFame || []) for (const c of y.categories) if (!c.awardToken) { c.awardToken = newAwardToken(); changed = true; }
+  if (changed) writeDb();
+}
+
+// Hall of Fame (arkistoitu) ensin, sitten tämän vuoden kategoriat
+function findAward(token) {
+  if (!AWARD_TOKEN_RE.test(token)) return null;
+  for (const y of db.hallOfFame || []) for (const c of y.categories) if (c.awardToken === token) return { hof: y, cat: c };
+  const cat = db.categories.find((c) => c.awardToken === token && c.advanced);
+  return cat ? { cat } : null;
+}
+
+// Julkinen näkymä. Kuvien osoitteet ovat muotoa /p/<tunniste>/img/<tiedosto>, ja vain tämän sivun kuvat ovat saatavilla.
+function awardPublic(token) {
+  const a = findAward(token);
+  if (!a) return null;
+  const pub = (photo) => (photo ? { ...photo, src: `/p/${token}/img/${photo.src.slice('/images/'.length)}` } : null);
+  if (a.hof) {
+    const places = a.cat.nominees.filter((n) => hofPlace(n)).map((n) => ({
+      place: hofPlace(n), name: n.name, reason: n.reason || '', photo: db.settings.safeMode ? null : pub(photoOf(n.image, n.crop)),
+    })).sort((x, y) => x.place - y.place);
+    return { year: a.hof.year, name: a.cat.name, description: a.cat.description || '', published: true, archived: true, places };
+  }
+  const published = !!db.settings.awardsPublished;
+  return {
+    year: galaYear(), name: a.cat.name, description: a.cat.description || '', published, archived: false,
+    places: published ? placesFor(a.cat).map(({ n, place }) => ({ place, name: nomName(n), reason: n.reason || '', photo: pub(nomPhoto(n)) })) : [],
+  };
+}
+
+route('GET', '/api/award/:token', ({ user, params }) => {
+  const a = awardPublic(params.token);
+  if (!a) fail(404, 'Palkintosivua ei löydy.');
+  return { ...a, loggedIn: !!user };
+}, { auth: false });
+
+function serveAwardImage(res, pathname) {
+  const [, , token, , name] = pathname.split('/');
+  const a = awardPublic(token);
+  const ok = a && IMG_NAME.test(name || '') && a.places.some((p) => p.photo && p.photo.src.endsWith('/' + name));
+  if (!ok) { res.writeHead(404); return res.end(); }
+  fs.readFile(path.join(IMG_DIR, name), (err, data) => {
+    if (err) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(name)], 'Cache-Control': 'public, max-age=3600' });
+    res.end(data);
+  });
+}
+
+// Hallinnan lista: tämän vuoden kategoriat sijoineen sekä Hall of Famen vuodet
+function awardsAdmin() {
+  ensureAwardTokens();
+  const counts = finalCounts();
+  return {
+    published: !!db.settings.awardsPublished,
+    baseUrl: db.settings.awardBaseUrl || '',
+    current: advancedCats().map((c) => ({
+      id: c.id, name: c.name, token: c.awardToken, manual: !!(c.awardPlaces && Object.keys(c.awardPlaces).length),
+      places: placesFor(c).map(({ n, place }) => ({ place, name: nomName(n) })),
+      finalists: db.nominees.filter((n) => n.categoryId === c.id && n.finalist).map((n) => ({ id: n.id, name: nomName(n), votes: counts[n.id] || 0, place: (c.awardPlaces || {})[n.id] || null })),
+    })),
+    archived: (db.hallOfFame || []).slice().sort((a, b) => b.year - a.year).map((y) => ({
+      year: y.year,
+      categories: y.categories.map((c) => ({ name: c.name, token: c.awardToken, places: c.nominees.filter((n) => hofPlace(n)).map((n) => ({ place: hofPlace(n), name: n.name })).sort((a, b) => a.place - b.place) })),
+    })),
+  };
+}
+
+// Sijat käsin (esim. tasapelin ratkaisu): { places: { nomineeId: 1|2|3|null } } tai { reset: true } = takaisin äänimääriin
+route('POST', '/api/admin/awards/:id/places', ({ user, params, body }) => {
+  const c = db.categories.find((x) => x.id === params.id && x.advanced) || fail(404, 'Kategoriaa ei löydy.');
+  if (body.reset) delete c.awardPlaces;
+  else {
+    const fins = new Set(db.nominees.filter((n) => n.categoryId === c.id && n.finalist).map((n) => n.id));
+    const places = {};
+    for (const [id, p] of Object.entries(body.places || {})) if (fins.has(id) && [1, 2, 3].includes(Number(p))) places[id] = Number(p);
+    c.awardPlaces = places;
+  }
+  writeDb();
+  return { ...stateFor(user), notice: body.reset ? 'Sijat lasketaan taas finaalin äänistä.' : `Sijat tallennettu: ${c.name}.` };
+}, { admin: true });
 
 // ---------- Discord-ilmoitukset ----------
 // Palvelin lähettää tapahtumista viestin Discord-kanavalle webhookin kautta (pelkkä HTTPS-pyyntö, ei bottia).
@@ -1531,6 +1649,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Referrer-Policy', 'same-origin');
 
   if (pathname.startsWith('/images/')) return serveImage(req, res, pathname);
+  if (/^\/p\/[\w-]+\/img\//.test(pathname)) return serveAwardImage(res, pathname);
   if (!pathname.startsWith('/api/')) return serveStatic(req, res, pathname);
 
   // Yksinkertainen CSRF-suoja: muuttavat pyynnöt vain JSON-muodossa samasta originista

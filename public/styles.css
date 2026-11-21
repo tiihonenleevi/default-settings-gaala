@@ -983,3 +983,60 @@ td.tester input { width: 18px; height: 18px; accent-color: var(--red); }
 .bulletin-text .dc-mention { color: #f0a35e; background: rgba(240, 163, 94, 0.15); border-radius: 3px; padding: 0 2px; }
 .bulletin-text .dc-sub { font-size: 12px; color: #9a9ca3; }
 .bulletin-preview pre { margin: 0; padding: 14px 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.55 var(--font-sans); color: var(--ink); background: rgba(0, 0, 0, 0.35); border: 1px solid var(--border); border-radius: var(--radius-md); max-height: 520px; overflow-y: auto; }
+/* ---------- Palkintosivu (pokaalin QR-koodi) ---------- */
+.award-page { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+.award-top { display: flex; justify-content: center; padding: 28px 16px 0; }
+.award-main { display: grid; gap: 36px; align-content: start; padding-block: 40px 56px; text-align: center; }
+.award-head { display: grid; gap: 14px; justify-items: center; }
+.award-title { font-size: clamp(40px, 7vw, 80px); max-width: 18ch; }
+.award-head .lead { max-width: 56ch; margin: 0; }
+.award-wait { margin: 6px 0 0; font: 500 italic 22px/1.3 var(--font-display); color: var(--gold-text); }
+/* Palkintokoroke: 2. | 1. | 3., ykkönen korkeimmalla ja suurimpana */
+.podium { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: clamp(14px, 3vw, 32px); align-items: start; max-width: 980px; width: 100%; margin: 0 auto; }
+.podium-col { display: grid; gap: 14px; justify-items: center; min-width: 0; }
+.podium-col.place-2, .podium-col.place-3 { margin-top: clamp(60px, 12vw, 150px); }
+.podium-place { margin: 0; font: 600 clamp(22px, 3vw, 30px)/1 var(--font-display); color: var(--ink); }
+.place-1 .podium-place { background: var(--gold-foil); -webkit-background-clip: text; background-clip: text; color: transparent; font-size: clamp(28px, 4vw, 40px); }
+.place-2 .podium-place { color: #d7dbe2; }
+.place-3 .podium-place { color: #d39a68; }
+.podium-card { width: 100%; text-align: center; }
+.podium-card:hover { transform: none; }
+.podium-card .nom-mono { aspect-ratio: 4 / 5; }
+.podium-card .nom-body { padding: 14px 14px 18px; justify-items: center; }
+.place-1 .podium-card { border-color: rgba(210, 175, 87, 0.75); box-shadow: var(--glow-gold), var(--card-shadow); }
+.place-2 .podium-card { border-color: rgba(215, 219, 226, 0.45); }
+.place-3 .podium-card { border-color: rgba(211, 154, 104, 0.5); }
+.podium-card.is-secret .nom-mono > span:first-child { font-family: var(--font-display); }
+.podium-card.is-secret .h3 { font-size: 17px; color: var(--ink-muted); font-weight: 500; }
+.podium.is-waiting .podium-card { opacity: 0.85; }
+.award-actions { display: grid; gap: 10px; justify-items: center; }
+@media (max-width: 640px) {
+  /* puhelimessa ykkönen ensin koko leveydeltä, kakkonen ja kolmonen rinnakkain sen alla */
+  .podium { grid-template-columns: 1fr 1fr; gap: 14px; }
+  .podium-col.place-1 { grid-column: 1 / -1; order: -1; justify-self: center; width: min(320px, 100%); }
+  .podium-col.place-2, .podium-col.place-3 { margin-top: 0; }
+  .podium-col.is-empty { display: none; }
+  .podium-card .nom-body { padding: 10px 8px 14px; }
+}
+/* Hall of Famen sijamerkit ja lomakkeen sijavalinta */
+.place-tag { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; letter-spacing: 0.04em; border: 1px solid var(--border); color: var(--ink-muted); vertical-align: 1px; }
+.place-tag.place-2 { color: #d7dbe2; border-color: rgba(215, 219, 226, 0.45); }
+.place-tag.place-3 { color: #d39a68; border-color: rgba(211, 154, 104, 0.5); }
+.hof-place { cursor: default; padding: 4px 6px 4px 12px; }
+.hof-place select { background: transparent; color: inherit; border: 0; font: inherit; padding: 4px 2px; cursor: pointer; }
+.hof-place select option { color: #000; }
+.hof-place.has-place { color: var(--ink); border-color: rgba(210, 175, 87, 0.45); }
+.hof-place.is-first { color: var(--on-gold); background: var(--gold-gradient); border-color: transparent; font-weight: 600; }
+.hof-place:has(select:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Hallinta: palkintosivut ja QR-koodit */
+.awards-panel { display: grid; gap: 16px; }
+.award-group { display: grid; gap: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.award-group > summary { cursor: pointer; list-style-position: inside; }
+.award-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 12px; }
+.award-item { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: start; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: rgba(255, 238, 205, 0.02); }
+.award-item .qr-box { display: block; border-radius: 6px; background: #fff; }
+.qr-loading { background: rgba(255, 255, 255, 0.08) !important; }
+.award-item-body { display: grid; gap: 6px; min-width: 0; }
+.award-url { overflow-wrap: anywhere; }
+.award-places-edit { display: grid; gap: 8px; padding: 10px; border: 1px dashed var(--border); border-radius: var(--radius-md); }
+@media (max-width: 480px) { .award-item { grid-template-columns: 1fr; justify-items: start; } }
