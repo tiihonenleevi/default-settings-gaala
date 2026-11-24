@@ -16,6 +16,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const IMG_DIR = path.join(DATA_DIR, 'images'); // osallistujien ja ehdokkaiden kuvat (samassa volyymissa kuin db.json)
+const VIDEO_DIR = path.join(DATA_DIR, 'videos'); // videoklipit (vain adminit näkevät toistaiseksi)
 
 if (!ADMIN_CODE || ADMIN_CODE.length < 8) {
   console.error('Aseta ADMIN_CODE, vähintään 8 merkkiä (.env-tiedostoon tai ympäristömuuttujiin).');
@@ -63,12 +64,15 @@ function emptyDb() {
     photoSuggestions: [],
     // Hall of Fame: aiempien vuosien gaalat. { id, year, categories: [{ name, description, nominees: [{ name, reason, personId, winner }] }] }
     hallOfFame: [],
+    // Videot: { id, personId, title, by, createdAt, status: 'processing' | 'ready' | 'failed', file, poster, duration, width, height, size, error }
+    videos: [],
   };
 }
 
 function loadDb() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(IMG_DIR, { recursive: true });
+  fs.mkdirSync(VIDEO_DIR, { recursive: true });
   if (!fs.existsSync(DB_FILE)) {
     const fresh = emptyDb();
     writeDb(fresh);
@@ -256,6 +260,228 @@ function serveImage(req, res, pathname) {
     res.writeHead(200, { 'Content-Type': MIME[path.extname(name)], 'Cache-Control': 'private, max-age=31536000, immutable' });
     res.end(data);
   });
+}
+
+// ---------- Videot (vain adminit, testivaihe) ----------
+// Puhelimen tai tietokoneen video lähetetään raakana tiedostona (ei JSONina/base64:nä), ja palvelin kirjoittaa sen
+// suoraan levylle, joten isokaan video ei täytä muistia. Jos ffmpeg on asennettu (Dockerfile asentaa sen), video
+// muunnetaan taustalla muotoon, joka toimii kaikissa selaimissa: H.264 + AAC MP4, pidempi sivu enintään
+// VIDEO_MAX_SIDE px, enintään 30 kuvaa/s. iPhonen HDR-video (HLG/Dolby Vision) muunnetaan tavalliseksi, jottei se
+// näytä haalealta, ja sijaintitiedot (GPS) yms. metatiedot poistetaan. Videosta otetaan myös kansikuva korttiin.
+// Ilman ffmpegiä alkuperäinen tiedosto tallennetaan sellaisenaan (iPhonen HEVC-video ei silloin toistu kaikissa selaimissa).
+const { execFile, spawn } = require('node:child_process');
+const os = require('node:os');
+const VIDEO_MAX_MB = Math.max(10, Number(process.env.VIDEO_MAX_MB || 500));
+const VIDEO_MAX_SIDE = Math.max(320, Number(process.env.VIDEO_MAX_SIDE || 1280));
+const VIDEO_NAME = /^[0-9a-f]{16}\.(mp4|mov|webm|jpg)$/;
+const VIDEO_MIME = { '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.jpg': 'image/jpeg' };
+let ffmpegOk = null; // null = tarkistamatta, true/false = löytyikö ffmpeg
+let videoJob = null; // { id, child } käynnissä oleva muunnos
+const videoQueue = [];
+const vpath = (name) => path.join(VIDEO_DIR, name);
+const rmVideoFile = (name) => { if (name) fs.rm(vpath(name), { force: true }, () => {}); };
+
+function videoView(v) {
+  return {
+    id: v.id, personId: v.personId, personName: userName(v.personId), title: v.title || '', status: v.status, error: v.error || '',
+    src: v.file ? `/videos/${v.file}` : null, poster: v.poster ? `/videos/${v.poster}` : null,
+    duration: v.duration || null, width: v.width || null, height: v.height || null, size: v.size || null,
+    byName: v.by ? userName(v.by) : '', createdAt: v.createdAt,
+  };
+}
+
+// Tiedoston alku kertoo säiliön: MP4/MOV (iPhone, Android, useimmat) tai WebM/MKV
+function sniffVideo(file) {
+  const fd = fs.openSync(file, 'r'); const b = Buffer.alloc(16);
+  try { fs.readSync(fd, b, 0, 16, 0); } finally { fs.closeSync(fd); }
+  if (b.toString('latin1', 4, 8) === 'ftyp') return b.toString('latin1', 8, 12) === 'qt  ' ? 'mov' : 'mp4';
+  if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'webm';
+  return null;
+}
+
+function run(cmd, args, timeoutMs, onChild) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    try { os.setPriority(child.pid, 10); } catch {} // muunnos ei hidasta itse sivua
+    if (onChild) onChild(child);
+    let out = ''; let err = '';
+    child.stdout.on('data', (d) => { if (out.length < 200000) out += d; });
+    child.stderr.on('data', (d) => { err = (err + d).slice(-4000); });
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    child.on('error', (e) => { clearTimeout(timer); reject(e); });
+    child.on('close', (code, sig) => { clearTimeout(timer); code === 0 ? resolve(out) : reject(new Error(sig ? `keskeytetty (${sig})` : err.trim().split('\n').slice(-3).join(' | ') || `exit ${code}`)); });
+  });
+}
+
+async function probe(file) {
+  const out = await run('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file], 60000);
+  const j = JSON.parse(out);
+  const vs = (j.streams || []).find((s) => s.codec_type === 'video' && !(s.disposition && s.disposition.attached_pic));
+  const rot = Number(((vs && vs.side_data_list) || []).find((x) => x.rotation != null)?.rotation || (vs && vs.tags && vs.tags.rotate) || 0);
+  const [fn, fd] = String((vs && (vs.avg_frame_rate || vs.r_frame_rate)) || '0/1').split('/').map(Number);
+  const swap = Math.abs(rot) % 180 === 90;
+  return {
+    video: !!vs, duration: Number(j.format && j.format.duration) || Number(vs && vs.duration) || 0,
+    width: vs ? (swap ? vs.height : vs.width) : 0, height: vs ? (swap ? vs.width : vs.height) : 0,
+    fps: fd ? fn / fd : 0, hdr: !!vs && ['arib-std-b67', 'smpte2084'].includes(vs.color_transfer),
+  };
+}
+
+async function processVideo(v) {
+  const src = vpath(`${v.id}.orig`); const tmp = vpath(`${v.id}.tmp.mp4`); const out = `${v.id}.mp4`; const poster = `${v.id}.jpg`;
+  const info = await probe(src);
+  if (!info.video) throw new Error('Tiedostossa ei ole videokuvaa.');
+  const scale = `scale=w='min(iw,${VIDEO_MAX_SIDE})':h='min(ih,${VIDEO_MAX_SIDE})':force_original_aspect_ratio=decrease:force_divisible_by=2`;
+  const fps = info.fps > 31 ? ',fps=30' : '';
+  const tonemap = 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,';
+  const encode = (vf) => run('ffmpeg', ['-hide_banner', '-y', '-i', src, '-map', '0:v:0', '-map', '0:a:0?', '-map_metadata', '-1',
+    '-vf', `${vf}format=yuv420p,${scale}${fps}`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-profile:v', 'high',
+    '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart', tmp], 60 * 60 * 1000, (child) => { videoJob = { id: v.id, child }; });
+  try { await encode(info.hdr ? tonemap : ''); } catch (e) {
+    if (!info.hdr || !db.videos.some((x) => x.id === v.id)) throw e;
+    await encode(''); // HDR-muunnos ei onnistunut (esim. zscale puuttuu): tavallinen muunnos, värit voivat olla haaleat
+  }
+  const done = await probe(tmp);
+  const at = Math.min(1, (done.duration || 0) / 2).toFixed(2);
+  await run('ffmpeg', ['-hide_banner', '-y', '-ss', at, '-i', tmp, '-frames:v', '1', '-vf', 'scale=w=640:h=640:force_original_aspect_ratio=decrease', '-q:v', '4', vpath(poster)], 120000)
+    .catch(() => {});
+  fs.renameSync(tmp, vpath(out));
+  return { file: out, poster: fs.existsSync(vpath(poster)) ? poster : null, duration: done.duration, width: done.width, height: done.height, size: fs.statSync(vpath(out)).size };
+}
+
+// Ilman ffmpegiä: alkuperäinen tiedosto sellaisenaan
+function keepOriginal(v) {
+  const kind = sniffVideo(vpath(`${v.id}.orig`)) || 'mp4';
+  const file = `${v.id}.${kind}`;
+  fs.renameSync(vpath(`${v.id}.orig`), vpath(file));
+  Object.assign(v, { status: 'ready', file, poster: null, size: fs.statSync(vpath(file)).size });
+}
+
+async function runVideoQueue() {
+  if (videoJob || ffmpegOk === null) return;
+  const id = videoQueue.shift(); if (!id) return;
+  const v = db.videos.find((x) => x.id === id);
+  if (!v || v.status !== 'processing') return runVideoQueue();
+  videoJob = { id, child: null };
+  const started = Date.now();
+  try {
+    if (!ffmpegOk) keepOriginal(v);
+    else {
+      const r = await processVideo(v);
+      const still = db.videos.find((x) => x.id === id);
+      if (!still) { rmVideoFile(r.file); rmVideoFile(r.poster); } // poistettiin muunnoksen aikana
+      else { Object.assign(still, r, { status: 'ready', error: '' }); console.log(`Video ${id} valmis ${Math.round((Date.now() - started) / 1000)} s`); }
+      rmVideoFile(`${id}.orig`);
+    }
+  } catch (e) {
+    const still = db.videos.find((x) => x.id === id);
+    rmVideoFile(`${id}.orig`); rmVideoFile(`${id}.tmp.mp4`);
+    if (still) {
+      still.status = 'failed';
+      still.error = /videokuvaa/.test(e.message) ? e.message : 'Videota ei voitu muuntaa. Onko tiedosto ehjä video?';
+      console.error(`Video ${id} epäonnistui:`, e.message);
+      notify('errors', `🛑 **Videon muunnos epäonnistui** (${userName(still.personId)})\n${String(e.message).slice(0, 300)}`);
+    }
+  } finally {
+    videoJob = null;
+    writeDb();
+    runVideoQueue();
+  }
+}
+function enqueueVideo(id) { if (!videoQueue.includes(id)) videoQueue.push(id); runVideoQueue(); }
+
+// Käynnistyksessä: löytyykö ffmpeg, ja jatketaan kesken jääneitä muunnoksia
+function initVideos() {
+  db.videos = db.videos || [];
+  // Keskeytyneiden lähetysten ja muunnosten jäänteet pois
+  try { for (const f of fs.readdirSync(VIDEO_DIR)) if (/\.(upload|tmp\.mp4)$/.test(f)) rmVideoFile(f); } catch {}
+  execFile('ffmpeg', ['-hide_banner', '-version'], (e1) => execFile('ffprobe', ['-version'], (e2) => {
+    ffmpegOk = !e1 && !e2;
+    console.log(ffmpegOk ? 'ffmpeg löytyi: videot muunnetaan MP4-muotoon.' : 'ffmpeg puuttuu: videot tallennetaan sellaisenaan (asenna ffmpeg Dockerfilessä).');
+    for (const v of db.videos.filter((x) => x.status === 'processing')) {
+      if (fs.existsSync(vpath(`${v.id}.orig`))) videoQueue.push(v.id);
+      else { v.status = 'failed'; v.error = 'Lähetys keskeytyi. Lähetä video uudelleen.'; }
+    }
+    writeDb();
+    runVideoQueue();
+  }));
+}
+
+// POST /api/admin/videos/upload?personId=…&title=… – runko on itse videotiedosto.
+// CSRF: vaaditaan oma otsake X-Gaala-Upload, jota toinen sivusto ei voi lähettää ilman CORS-lupaa.
+function handleVideoUpload(req, res, url) {
+  const reject = (status, error) => { send(res, status, { error }); req.resume(); };
+  const user = currentUser(req);
+  if (!user) return reject(401, 'Kirjaudu ensin sisään.');
+  if (!user.admin) return reject(403, 'Vain adminille.');
+  if (req.headers['x-gaala-upload'] !== '1' || req.headers['sec-fetch-site'] === 'cross-site') return reject(403, 'Estetty pyyntö.');
+  const person = db.users[url.searchParams.get('personId') || ''];
+  if (!person || person.root) return reject(404, 'Osallistujaa ei löydy.');
+  const max = VIDEO_MAX_MB * 1024 * 1024;
+  const declared = Number(req.headers['content-length'] || 0);
+  if (declared > max) return reject(413, `Video on liian suuri (max ${VIDEO_MAX_MB} Mt).`);
+  try {
+    const free = fs.statfsSync(VIDEO_DIR); const avail = free.bavail * free.bsize;
+    if (declared && avail < declared * 2 + 300 * 1024 * 1024) return reject(507, 'Palvelimen levytila ei riitä videolle.');
+  } catch { /* statfs puuttuu vanhasta Nodesta: ei tarkistusta */ }
+  const id = newId(); const tmp = vpath(`${id}.upload`);
+  const out = fs.createWriteStream(tmp);
+  let size = 0; let aborted = false;
+  const abort = (status, msg) => {
+    if (aborted) return; aborted = true;
+    out.once('close', () => rmVideoFile(`${id}.upload`)); out.destroy(); // poisto vasta kun tiedosto on suljettu
+    if (!res.headersSent) send(res, status, { error: msg });
+    req.unpipe(out); req.resume();
+  };
+  req.on('data', (c) => { size += c.length; if (size > max) abort(413, `Video on liian suuri (max ${VIDEO_MAX_MB} Mt).`); });
+  req.on('close', () => { if (!req.complete) abort(400, 'Lähetys keskeytyi.'); });
+  out.on('error', () => abort(500, 'Videon tallennus epäonnistui.'));
+  req.pipe(out);
+  out.on('finish', () => {
+    if (aborted) return;
+    if (size < 1000) { rmVideoFile(`${id}.upload`); return send(res, 400, { error: 'Tiedosto on tyhjä.' }); }
+    const kind = sniffVideo(tmp);
+    if (!kind) {
+      rmVideoFile(`${id}.upload`);
+      notify('errors', `🛑 **Videon lähetys hylättiin** (${user.name} → ${person.name}): tuntematon tiedostomuoto`);
+      return send(res, 400, { error: 'Tiedosto ei ole tuettu video (MP4, MOV tai WebM).' });
+    }
+    fs.renameSync(tmp, vpath(`${id}.orig`));
+    db.videos.push({ id, personId: person.id, title: clean(url.searchParams.get('title'), 80), by: user.id, createdAt: now(), status: 'processing', size, kind });
+    writeDb();
+    enqueueVideo(id);
+    send(res, 200, { ...stateFor(user), notice: ffmpegOk ? 'Video lähetetty. Palvelin käsittelee sen hetken.' : 'Video lähetetty.' });
+  });
+}
+
+// Videot ja kansikuvat: vain adminit (testivaihe). Range-tuki on pakollinen iPhonen Safarille ja kelaukselle.
+function serveVideo(req, res, pathname) {
+  const name = pathname.slice('/videos/'.length);
+  const user = currentUser(req);
+  if (!user || !user.admin || !VIDEO_NAME.test(name)) { res.writeHead(404); return res.end(); }
+  const file = vpath(name);
+  fs.stat(file, (err, st) => {
+    if (err) { res.writeHead(404); return res.end(); }
+    const headers = { 'Content-Type': VIDEO_MIME[path.extname(name)], 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=31536000, immutable' };
+    let start = 0; let end = st.size - 1; let status = 200;
+    const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+    if (m && (m[1] || m[2])) {
+      if (m[1] === '') start = Math.max(0, st.size - Number(m[2]));
+      else { start = Number(m[1]); if (m[2]) end = Math.min(end, Number(m[2])); }
+      if (start > end || start >= st.size) { res.writeHead(416, { 'Content-Range': `bytes */${st.size}` }); return res.end(); }
+      status = 206; headers['Content-Range'] = `bytes ${start}-${end}/${st.size}`;
+    }
+    headers['Content-Length'] = end - start + 1;
+    res.writeHead(status, headers);
+    if (req.method === 'HEAD') return res.end();
+    fs.createReadStream(file, { start, end }).on('error', () => res.destroy()).pipe(res);
+  });
+}
+
+function deleteVideo(v) {
+  if (videoJob && videoJob.id === v.id && videoJob.child) videoJob.child.kill('SIGKILL');
+  for (const n of [v.file, v.poster, `${v.id}.orig`, `${v.id}.upload`, `${v.id}.tmp.mp4`]) rmVideoFile(n);
+  db.videos = db.videos.filter((x) => x.id !== v.id);
 }
 
 // ---------- Henkilöt ja ehdokkaat ----------
@@ -461,6 +687,8 @@ function adminView() {
       finalVotes: fin[n.id] || 0, byName: userName(n.by),
       finalVoters: db.settings.phase >= 5 ? Object.entries(db.finalVotes).filter(([, v]) => v[n.categoryId] === n.id).map(([uid]) => userName(uid) || 'poistettu').sort((a, b) => a.localeCompare(b, 'fi')) : [] })),
     safeMode: !!db.settings.safeMode,
+    videos: (db.videos || []).filter((v) => db.users[v.personId]).map(videoView),
+    videoInfo: { ffmpeg: !!ffmpegOk, maxMb: VIDEO_MAX_MB, queue: videoQueue.length + (videoJob ? 1 : 0) },
     hofPublished: !!db.settings.hofPublished,
     awards: awardsAdmin(),
     // Discord-ilmoitukset: osoitetta ei koskaan lähetetä selaimeen, vain tieto siitä, onko se asetettu
@@ -1083,6 +1311,7 @@ route('DELETE', '/api/admin/users/:id', ({ user, params }) => {
   deleteImage(u.photo);
   for (const x of (db.photoSuggestions || []).filter((y) => y.personId === u.id)) deleteImage(x.image);
   db.photoSuggestions = (db.photoSuggestions || []).filter((y) => y.personId !== u.id);
+  for (const v of (db.videos || []).filter((x) => x.personId === u.id)) deleteVideo(v);
   delete db.users[u.id];
   db.catVotes = db.catVotes.filter((v) => v.userId !== u.id);
   delete db.nomRanks[u.id];
@@ -1091,6 +1320,20 @@ route('DELETE', '/api/admin/users/:id', ({ user, params }) => {
   if (db.finalVoteAt) delete db.finalVoteAt[u.id];
   writeDb();
   return stateFor(user);
+}, { admin: true });
+
+// Videon otsikon muutos ja poisto (lähetys: handleVideoUpload)
+route('POST', '/api/admin/videos/:id', ({ user, params, body }) => {
+  const v = (db.videos || []).find((x) => x.id === params.id) || fail(404, 'Videota ei löydy.');
+  v.title = clean(body.title, 80);
+  writeDb();
+  return { ...stateFor(user), notice: 'Otsikko tallennettu.' };
+}, { admin: true });
+route('DELETE', '/api/admin/videos/:id', ({ user, params }) => {
+  const v = (db.videos || []).find((x) => x.id === params.id) || fail(404, 'Videota ei löydy.');
+  deleteVideo(v);
+  writeDb();
+  return { ...stateFor(user), notice: 'Video poistettu.' };
 }, { admin: true });
 
 route('POST', '/api/admin/phase', ({ user, body }) => {
@@ -1741,6 +1984,8 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Referrer-Policy', 'same-origin');
 
   if (pathname.startsWith('/images/')) return serveImage(req, res, pathname);
+  if (pathname.startsWith('/videos/')) return serveVideo(req, res, pathname);
+  if (req.method === 'POST' && pathname === '/api/admin/videos/upload') return handleVideoUpload(req, res, new URL(req.url, 'http://x'));
   if (/^\/p\/[\w-]+\/img\//.test(pathname)) return serveAwardImage(res, pathname);
   if (!pathname.startsWith('/api/')) return serveStatic(req, res, pathname);
 
@@ -1767,6 +2012,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+initVideos();
 server.listen(PORT, HOST, () => {
   console.log(`HerrasmiesKlubi Gaala käynnissä: http://${HOST}:${PORT}`);
   // Auttaa vianetsinnässä paljastamatta koodia: näyttää pituuden ja ensimmäisen merkin

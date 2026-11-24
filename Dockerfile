@@ -1,4 +1,6 @@
 FROM node:22-alpine
+# ffmpeg muuntaa adminien lähettämät videot muotoon, joka toistuu kaikissa selaimissa (ks. README: Videot)
+RUN apk add --no-cache ffmpeg
 WORKDIR /app
 COPY package.json server.js ./
 COPY public ./public

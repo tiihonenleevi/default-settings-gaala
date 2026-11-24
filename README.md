@@ -72,6 +72,17 @@ Jos webhookia ei ole asetettu, ilmoitukset ovat pois päältä. Discordin katko 
 ### Julkinen päivittäinen tiedote
 
 Toinen, erillinen webhook osallistujien kanavalle (hallinta → **Julkinen päivittäinen tiedote**). Vaiheissa 1–5 palvelin lähettää kerran päivässä valittuun aikaan (oletus 12:00) virallisen kaksikielisen tiedotteen: montako jäsentä on lyönyt vaiheen lukkoon ja paljonko aikaa vaiheen päättymiseen on (tänään / huomenna / N päivää, vaiheen päättymisajan mukaan). Kummankin kielen kappaleen perään listataan ne, jotka eivät ole vielä lukinneet (paitsi jos kukaan ei ole vielä lukinnut, jolloin listassa olisivat kaikki). Nimilistan saa pois asetuksesta "Listaa tiedotteessa lukitsemattomien nimet". Kohdassa "Ei mukana tiedotteessa" voi rajata pois esim. adminit, jotka ehdottavat mutta eivät äänestä: he eivät näy tiedotteen lukumäärissä eivätkä nimilistassa (adminien kanavan muistutuksiin rajaus ei vaikuta). Lopussa on allekirjoitus ja maininta automaattisesta viestistä. Pingattavan roolin (esim. @Gaala-jäsenet) voi asettaa roolin ID:llä; muuten ketään ei pingata. Hallinnassa tekstin voi esikatsella ja lähettää heti (**Lähetä nyt**).
+## Videot (testi, vain adminit)
+
+Hallinnan paneelista **Videot** avautuu sivu, jolla adminit lisäävät osallistujille videoklippejä (esim. kategoriaan Vuoden videoklippi). Toistaiseksi videot näkyvät vain admineille.
+
+- **Lisää videoita:** osallistujakortit. Kortin painaminen avaa ikkunan, jossa voi antaa otsikon ja valita videon puhelimesta (iPhone, Android: galleria tai kamera) tai tietokoneelta. Lähetyksen edistyminen näkyy prosentteina. Otsikkoa voi muuttaa ja videon poistaa.
+- **Esikatselu:** jokainen video omana korttinaan. Kun hiiri on kortin päällä, video pyörii kortissa äänettömänä; klikkaus avaa sen isolle ruudulle äänen kanssa (nuolilla seuraava/edellinen, Esc sulkee). Kosketusnäytöllä napautus avaa ison ruudun suoraan.
+- Video lähetetään raakana tiedostona, ja palvelin kirjoittaa sen suoraan levylle, joten isokaan video ei täytä muistia. Enimmäiskoko on 500 Mt (`VIDEO_MAX_MB`).
+- Palvelin muuntaa videon taustalla ffmpegillä muotoon, joka toistuu kaikissa selaimissa (H.264 + AAC MP4, pidempi sivu enintään 1280 px eli `VIDEO_MAX_SIDE`, enintään 30 kuvaa/s). iPhonen HEVC- ja HDR-videot muunnetaan tavallisiksi, jotta ne eivät näytä haalealta, ja sijaintitiedot (GPS) yms. metatiedot poistetaan. Videosta otetaan kansikuva korttiin. Muunnos ajetaan matalalla prioriteetilla yksi kerrallaan, joten sivu toimii sen aikana normaalisti.
+- Docker-kuva asentaa ffmpegin. Ilman ffmpegiä (esim. systemd-asennus ilman `apt install ffmpeg`) video tallennetaan sellaisenaan, jolloin iPhonen HEVC-video ei toistu kaikissa selaimissa.
+- Videot ovat kansiossa `data/videos` (samassa volyymissa kuin `db.json`). Ne vievät levytilaa: palvelin kieltäytyy lähetyksestä, jos levyllä ei ole tilaa.
+
 ## Käynnistys
 
 ```bash
@@ -141,7 +152,7 @@ Jos kaverit näkevät tailnetissä muitakin koneita, rajatkaa pääsy ACL:llä p
 
 ## Varmuuskopio ja nollaus
 
-- Kaikki data on tiedostossa `data/db.json` ja kuvat kansiossa `data/images`. Varmuuskopioksi riittää `data`-kansion kopioiminen.
+- Kaikki data on tiedostossa `data/db.json`, kuvat kansiossa `data/images` ja videot kansiossa `data/videos`. Varmuuskopioksi riittää `data`-kansion kopioiminen.
 - Jos haluatte aloittaa alusta, pysäyttäkää palvelin ja poistakaa `data/db.json`.
 - Kadonneen koodin näkee hallinnan osallistujataulukosta.
 
