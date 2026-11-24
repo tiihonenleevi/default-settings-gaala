@@ -982,7 +982,7 @@ function simulate(act, d = {}) {
       const p = (s.people || []).find((x) => x.id === d.personId); if (!p) return false;
       if (d.reason.length < 3) return fail('Kirjoita myös mistä ehdotat.');
       if (s.nominees.filter((n) => n.categoryId === d.categoryId && n.mine).length >= L.maxNomineeProposals) return fail(`Voit ehdottaa enintään ${L.maxNomineeProposals} ehdokasta per kategoria.`);
-      s.nominees.push({ id: tid(), categoryId: d.categoryId, personId: p.id, name: p.name, reason: d.reason, photo: p.photo, finalist: false, mine: true, myFinal: false, video: d.video || null });
+      s.nominees.push({ id: tid(), categoryId: d.categoryId, personId: p.id, name: p.name, reason: d.reason, photo: d.photo || p.photo, finalist: false, mine: true, myFinal: false, video: d.video || null });
       break;
     }
     case 'del': {
@@ -1218,7 +1218,7 @@ function phaseNominees() {
         <p class="eyebrow">Kategoria ${String(idx + 1).padStart(2, '0')}</p>
         <div class="row"><h2 class="h2">${esc(c.name)}</h2><span class="meter small">${pips(myProps, L.maxNomineeProposals)} Ehdotuksia ${myProps} / ${L.maxNomineeProposals}</span></div>
         ${c.description ? `<p class="muted" style="margin:0">${esc(c.description)}</p>` : ''}
-        ${c.videoRequired || noms.some(hasVideo) ? `<div class="row cat-vid-row">${c.videoRequired ? '<span class="tag">Video pakollinen</span>' : ''}${noms.some(hasVideo) && canHover ? soundToggle() : ''}</div>` : ''}
+        ${c.mediaRequired || noms.some(hasVideo) ? `<div class="row cat-vid-row">${c.mediaRequired ? `<span class="tag">${c.mediaRequired === 'video' ? 'Video pakollinen' : 'Kuva tai video pakollinen'}</span>` : ''}${noms.some(hasVideo) && canHover ? soundToggle() : ''}</div>` : ''}
       </header>
       ${noms.length ? `
       <div class="nom-grid">
@@ -1402,7 +1402,11 @@ function adminView() {
         <tbody>${[...a.categories].sort((x, y) => (y.fixed - x.fixed) || (y.votes - x.votes)).map((c) => `
           <tr>
             <td><label class="check"><input type="checkbox" data-act="advance" data-id="${c.id}" ${c.advanced ? 'checked' : ''} ${c.fixed ? 'disabled' : ''}><span class="small muted">${c.fixed ? 'aina' : ''}</span></label></td>
-            <td>${isEditing('cat', c.id, true) ? editForm('cat', c, true) : `<b style="font-weight:500">${esc(c.name)}</b>${c.description ? `<div class="small muted">${esc(c.description)}</div>` : ''}<div class="by">${c.fixed ? 'Kiinteä' : `Ehdottaja: ${esc(c.byName || 'poistettu osallistuja')}`}</div><label class="check small vid-req"><input type="checkbox" data-act="video-required" data-id="${c.id}" ${c.videoRequired ? 'checked' : ''}> Video pakollinen ehdotuksissa</label>`}</td>
+            <td>${isEditing('cat', c.id, true) ? editForm('cat', c, true) : `<b style="font-weight:500">${esc(c.name)}</b>${c.description ? `<div class="small muted">${esc(c.description)}</div>` : ''}<div class="by">${c.fixed ? 'Kiinteä' : `Ehdottaja: ${esc(c.byName || 'poistettu osallistuja')}`}</div><label class="small vid-req">Ehdotuksen liite <select class="input input--sm" data-act="media-required" data-id="${c.id}" aria-label="Ehdotuksen liite: ${esc(c.name)}">
+              <option value="" ${!c.mediaRequired ? 'selected' : ''}>vapaaehtoinen</option>
+              <option value="any" ${c.mediaRequired === 'any' ? 'selected' : ''}>kuva tai video pakollinen</option>
+              <option value="video" ${c.mediaRequired === 'video' ? 'selected' : ''}>video pakollinen</option>
+            </select></label>`}</td>
             <td style="width:30%">${c.fixed ? '<span class="small muted">kiinteä</span>' : `<div class="bar"><i style="width:${(c.votes / maxCat) * 100}%"></i></div>`}</td>
             <td class="num">${c.fixed ? '' : c.votes}</td>
             <td class="act">${isEditing('cat', c.id, true) ? '' : editButton('cat', c.id, true)}${c.fixed || isEditing('cat', c.id, true) ? '' : `<button class="btn btn--ghost" data-act="del-cat" data-id="${c.id}" aria-label="Poista ${esc(c.name)}">Poista</button>`}</td>
@@ -1979,14 +1983,28 @@ function nomMedia(n, cls = '') {
 const hasVideo = (n) => !!(n.video && n.video.src);
 const soundToggle = () => `<button class="btn btn--ghost vid-sound" data-act="video-sound" aria-pressed="${hoverSound}" title="Ääni, kun hiiri on videokortin päällä"><span class="vid-sound-ico${hoverSound ? '' : ' is-off'}" aria-hidden="true"></span>Äänet ${hoverSound ? 'päällä' : 'pois'}</button>`;
 
-// Ehdotuslomakkeen videokenttä
+// Ehdotuslomakkeen liitekenttä: kuva tai video
 function nomVideoField(c) {
   const d = nomDrafts[c.id];
-  const label = `Video ${c.videoRequired ? '<b class="req">(pakollinen)</b>' : '<span class="muted">(valinnainen)</span>'}`;
+  const req = c.mediaRequired;
+  const label = req === 'video' ? 'Video <b class="req">(pakollinen)</b>'
+    : `Kuva tai video ${req === 'any' ? '<b class="req">(pakollinen)</b>' : '<span class="muted">(valinnainen)</span>'}`;
   let body;
   if (!d) {
-    body = `<button type="button" class="btn btn--secondary btn--sm" data-act="nom-video-pick" data-cat="${c.id}">+ Lisää video</button>
-      <span class="small muted">Puhelimesta (galleria tai kamera) tai tietokoneelta. Enintään ${(state.limits && state.limits.videoMaxMb) || 500} Mt.</span>`;
+    body = `<div class="row nv-btns">
+        ${req !== 'video' ? `<button type="button" class="btn btn--secondary btn--sm" data-act="nom-image-pick" data-cat="${c.id}">+ Lisää kuva</button>` : ''}
+        <button type="button" class="btn btn--secondary btn--sm" data-act="nom-video-pick" data-cat="${c.id}">+ Lisää video</button>
+      </div>
+      <span class="small muted">Puhelimesta (galleria tai kamera) tai tietokoneelta.${req !== 'video' ? ' Kuva näkyy ehdokaskortissa profiilikuvan tilalla.' : ''} Video enintään ${(state.limits && state.limits.videoMaxMb) || 500} Mt.</span>`;
+  } else if (d.kind === 'image') {
+    body = `<div class="nv-draft">
+        <div class="nv-thumb"><img src="${d.url}" alt=""></div>
+        <div class="nv-info">
+          <span class="small nv-name">${esc(d.name)}</span>
+          <span class="small ok-text">✓ Kuva valmiina ehdotukseen</span>
+          <button type="button" class="btn btn--ghost" data-act="nom-video-remove" data-cat="${c.id}">Poista kuva</button>
+        </div>
+      </div>`;
   } else {
     body = `<div class="nv-draft">
         <div class="nv-thumb"><video muted playsinline preload="metadata" src="${d.url}#t=0.1"></video></div>
@@ -2000,6 +2018,14 @@ function nomVideoField(c) {
       </div>`;
   }
   return `<div class="field nv-field"><span class="label">${label}</span>${body}</div>`;
+}
+
+// Kuva: sama käsittely kuin profiilikuvissa (HEIC-muunnos, pienennys), mutta tulos jää lomakkeelle ja lähtee
+// palvelimelle vasta ehdotuksen mukana (ks. uploadPhoto, kohde 'nomdraft')
+function setNomImage(catId, dataUrl, name) {
+  discardNomVideo(catId);
+  nomDrafts[catId] = { kind: 'image', url: dataUrl, name: name || 'kuva', status: 'done' };
+  render();
 }
 
 function pickNomVideo(catId) {
@@ -2019,7 +2045,7 @@ function startNomVideo(catId, file, done) {
   if (file.size > max) { toast(`Video on liian suuri (${fmtMb(file.size)}, max ${fmtMb(max)}).`, true); done(); return; }
   if (file.size < 1000) { toast('Tiedosto on tyhjä.', true); done(); return; }
   discardNomVideo(catId);
-  const d = (nomDrafts[catId] = { file, url: URL.createObjectURL(file), videoId: null, pct: 0, status: 'uploading', xhr: null, done });
+  const d = (nomDrafts[catId] = { kind: 'video', file, url: URL.createObjectURL(file), videoId: null, pct: 0, status: 'uploading', xhr: null, done });
   if (isTest()) { d.status = 'done'; d.local = true; done(); render(); return; } // testikäyttäjä: vain selaimessa
   const xhr = (d.xhr = new XMLHttpRequest());
   xhr.open('POST', `/api/videos/upload?${new URLSearchParams({ categoryId: catId })}`);
@@ -2045,7 +2071,7 @@ function startNomVideo(catId, file, done) {
 function dropDraft(catId) {
   const d = nomDrafts[catId]; if (!d) return;
   delete nomDrafts[catId];
-  try { URL.revokeObjectURL(d.url); } catch {}
+  if (d.kind === 'video') try { URL.revokeObjectURL(d.url); } catch {}
   if (d.done) d.done();
   return d;
 }
@@ -2205,6 +2231,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'pick-cancel': if (proposing) discardNomVideo(proposing.catId); proposing = null; render(); break;
     case 'nom-video-pick': pickNomVideo(t.dataset.cat); break;
+    case 'nom-image-pick': uploadTarget = { target: 'nomdraft', id: t.dataset.cat }; photoInput.click(); break; // heti klikkauksessa (iOS)
     case 'nom-video-remove': discardNomVideo(t.dataset.cat); render(); break;
     case 'nom-video': openNomVideo(id); break;
     case 'auto-finalists':
@@ -2468,7 +2495,7 @@ document.addEventListener('change', async (e) => {
     case 'user-nominable': await api('POST', `/api/admin/users/${t.dataset.id}`, { nominable: t.checked }).catch(() => {}); break;
     case 'user-admin': await api('POST', `/api/admin/users/${t.dataset.id}`, { admin: t.checked }).catch(() => {}); break;
     case 'advance': await api('POST', `/api/admin/categories/${t.dataset.id}`, { advanced: t.checked }).catch(() => {}); break;
-    case 'video-required': await api('POST', `/api/admin/categories/${t.dataset.id}`, { videoRequired: t.checked }).catch(() => {}); break;
+    case 'media-required': await api('POST', `/api/admin/categories/${t.dataset.id}`, { mediaRequired: t.value }).catch(() => {}); break;
     case 'finalist': await api('POST', `/api/admin/nominees/${t.dataset.id}`, { finalist: t.checked }).catch(() => {}); break;
     case 'toggle-final-counts': showFinalCounts = t.checked; render(); break;
   }
@@ -2578,6 +2605,12 @@ async function uploadPhoto(tgt, file, via) {
       const n = hofRow(tgt.id);
       if (n) { n.image = r.image; n.src = r.src; n.crop = null; hofDraft.dirty = true; openCrop('hof', tgt.id); } // heti rajaukseen, kuten profiilikuvissa
       uploadLog({ ...meta, result: 'onnistui', stage: `${via}/hof` });
+      return;
+    }
+    if (tgt.target === 'nomdraft') { // ehdotuksen kuva: lomakkeelle, lähtee ehdotuksen mukana
+      setNomImage(tgt.id, image, file.name);
+      toast('Kuva valmiina ehdotukseen.');
+      uploadLog({ ...meta, result: 'onnistui', stage: `${via}/ehdotuskuva` });
       return;
     }
     if (tgt.target === 'sugg') {
@@ -2863,17 +2896,20 @@ document.addEventListener('submit', async (e) => {
       const cat = state.categories.find((c) => c.id === cid) || {};
       const d = nomDrafts[cid];
       if (d && d.status === 'uploading') { toast('Odota hetki: video on vielä lähdössä palvelimelle.', true); return; }
-      if (cat.videoRequired && !d) { toast(`Kategoriaan ${cat.name} tarvitaan ehdotukseen video.`, true); return; }
+      if (cat.mediaRequired === 'video' && !(d && d.kind === 'video')) { toast(`Kategoriaan ${cat.name} tarvitaan ehdotukseen video.`, true); return; }
+      if (cat.mediaRequired === 'any' && !d) { toast(`Kategoriaan ${cat.name} tarvitaan ehdotukseen kuva tai video.`, true); return; }
+      const isVid = d && d.kind === 'video'; const isImg = d && d.kind === 'image';
       if (isTest()) {
-        const video = d ? { src: d.url, poster: null, status: 'ready', duration: null } : null;
-        if (simulate('add-nom', { categoryId: cid, personId: f.dataset.person, reason, video, msg: 'Ehdokas lisätty.' })) { clear('pr-' + cid); if (d) delete nomDrafts[cid]; proposing = null; render(); }
+        const video = isVid ? { src: d.url, poster: null, status: 'ready', duration: null } : null;
+        const photo = isImg ? { src: d.url, x: 50, y: 50, z: 1 } : undefined;
+        if (simulate('add-nom', { categoryId: cid, personId: f.dataset.person, reason, video, photo, msg: 'Ehdokas lisätty.' })) { clear('pr-' + cid); if (d) delete nomDrafts[cid]; proposing = null; render(); }
         return;
       }
-      await api('POST', '/api/nominees', { categoryId: cid, personId: f.dataset.person, reason, videoId: d ? d.videoId : undefined });
+      await api('POST', '/api/nominees', { categoryId: cid, personId: f.dataset.person, reason, videoId: isVid ? d.videoId : undefined, image: isImg ? d.url : undefined });
       clear('pr-' + cid);
-      if (d) { delete nomDrafts[cid]; setTimeout(() => { try { URL.revokeObjectURL(d.url); } catch {} }, 60000); }
+      if (d) { delete nomDrafts[cid]; if (isVid) setTimeout(() => { try { URL.revokeObjectURL(d.url); } catch {} }, 60000); }
       proposing = null; render();
-      toast(d ? 'Ehdokas ja video lisätty. Video näkyy kortissa, kun palvelin on käsitellyt sen.' : 'Ehdokas lisätty.');
+      toast(isVid ? 'Ehdokas ja video lisätty. Video näkyy kortissa, kun palvelin on käsitellyt sen.' : isImg ? 'Ehdokas ja kuva lisätty.' : 'Ehdokas lisätty.');
     } else if (f.dataset.form === 'edit') {
       const { kind, id } = f.dataset; const admin = !!f.dataset.admin; const k = `${kind}-${id}`;
       const body = kind === 'cat' ? { name: v('e1-' + k), description: v('e2-' + k) }

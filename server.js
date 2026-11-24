@@ -107,6 +107,10 @@ function loadDb() {
     st.phaseScheme = 3;
   }
   delete data.nomVotes;
+  // Ehdotuksen liite: aiempi videoRequired (true/false) → mediaRequired ('' = vapaaehtoinen, 'any' = kuva tai video, 'video')
+  for (const c of data.categories || []) {
+    if ('videoRequired' in c) { if (c.videoRequired && !c.mediaRequired) c.mediaRequired = 'video'; delete c.videoRequired; }
+  }
   data.nomRanks = data.nomRanks || {};
   data.nomRankAt = data.nomRankAt || {};
   // Kuvaversiot: nykyiset profiilikuvat mukaan versiolistaan, jotta niihin voi palata
@@ -656,7 +660,7 @@ function stateFor(user, opts = {}) {
 
   const visibleCats = phase <= 2 ? db.categories : advancedCats();
   base.categories = visibleCats.map((c) => ({
-    id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, videoRequired: !!c.videoRequired,
+    id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, mediaRequired: c.mediaRequired || '',
     mine: c.by === uid, myVote: myCatVotes.has(c.id),
   }));
 
@@ -737,7 +741,7 @@ function adminView() {
       p5: Object.keys(db.finalVotes[u.id] || {}).length,
       locked: isLocked(u), unlockRequested: unlockRequested(u),
     })).sort((a, b) => a.name.localeCompare(b.name, 'fi')),
-    categories: db.categories.map((c) => ({ id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, videoRequired: !!c.videoRequired, votes: catCounts[c.id] || 0, byName: userName(c.by) })),
+    categories: db.categories.map((c) => ({ id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, mediaRequired: c.mediaRequired || '', votes: catCounts[c.id] || 0, byName: userName(c.by) })),
     nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), ownPhoto: !!n.photo, finalist: !!n.finalist,
       points: (scores[n.id] || {}).points || 0, places: (scores[n.id] || {}).places || [0, 0, 0],
       rankVoters: showVoters && scores[n.id] ? scores[n.id].voters.map((x) => ({ name: userName(x.userId), place: x.place })).sort((a, b) => a.place - b.place || a.name.localeCompare(b.name, 'fi')) : [],
@@ -929,17 +933,21 @@ route('POST', '/api/nominees', ({ user, body }) => {
   if (db.nominees.some((n) => n.categoryId === cat.id && n.personId === person.id && norm(n.reason) === norm(reason))) fail(409, 'Sama ehdotus on jo listalla.');
   const mine = db.nominees.filter((n) => n.categoryId === cat.id && n.by === user.id).length;
   if (mine >= db.settings.maxNomineeProposals) fail(400, `Voit ehdottaa enintään ${db.settings.maxNomineeProposals} ehdokasta per kategoria.`);
-  // Video: oma luonnos (ks. handleVideoUpload). Pakollinen, jos admin on niin määrännyt kategorialle.
+  // Liite: joko kuva (data-URL, selain on jo pienentänyt) tai video (oma luonnos, ks. handleVideoUpload).
+  // Admin voi vaatia kategoriaan kuvan tai videon ('any') tai nimenomaan videon ('video').
   const video = body.videoId ? (db.videos || []).find((v) => v.id === body.videoId && v.draft && v.by === user.id) : null;
   if (body.videoId && !video) fail(400, 'Videota ei löytynyt. Lisää video uudelleen.');
   if (video && video.status === 'failed') fail(400, video.error || 'Videota ei voitu käsitellä. Lisää toinen video.');
-  if (cat.videoRequired && !video) fail(400, `Kategoriaan ${cat.name} tarvitaan ehdotukseen video.`);
-  const nom = { id: newId(), categoryId: cat.id, personId: person.id, name: person.name, reason, photo: null, finalist: false, by: user.id, createdAt: now() };
+  if (video && body.image) fail(400, 'Liitä ehdotukseen joko kuva tai video, ei molempia.');
+  if (cat.mediaRequired === 'video' && !video) fail(400, `Kategoriaan ${cat.name} tarvitaan ehdotukseen video.`);
+  if (cat.mediaRequired === 'any' && !video && !body.image) fail(400, `Kategoriaan ${cat.name} tarvitaan ehdotukseen kuva tai video.`);
+  const photo = body.image ? saveImage(body.image) : null; // viimeisenä, ettei hylätystä ehdotuksesta jää kuvaa levylle
+  const nom = { id: newId(), categoryId: cat.id, personId: person.id, name: person.name, reason, photo, finalist: false, by: user.id, createdAt: now() };
   if (video) { nom.videoId = video.id; delete video.draft; delete video.categoryId; video.nomineeId = nom.id; video.personId = person.id; }
   db.nominees.push(nom);
   writeDb();
   return stateFor(user);
-});
+}, { maxBody: 12 * 1024 * 1024 });
 
 // Osallistuja poistaa oman videoluonnoksensa (esim. vaihtaa videon ennen ehdottamista)
 route('DELETE', '/api/videos/:id', ({ user, params }) => {
@@ -1481,7 +1489,10 @@ route('POST', '/api/admin/categories/auto-advance', ({ user }) => {
 route('POST', '/api/admin/categories/:id', ({ user, params, body }) => {
   const cat = db.categories.find((c) => c.id === params.id) || fail(404, 'Kategoriaa ei löydy.');
   if ('advanced' in body && !cat.fixed) cat.advanced = !!body.advanced;
-  if ('videoRequired' in body) { cat.videoRequired = !!body.videoRequired; writeDb(); return stateFor(user); }
+  if ('mediaRequired' in body) {
+    cat.mediaRequired = ['any', 'video'].includes(body.mediaRequired) ? body.mediaRequired : '';
+    writeDb(); return stateFor(user);
+  }
   applyCategoryEdit(cat, body);
   writeDb();
   return stateFor(user);
