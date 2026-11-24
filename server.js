@@ -281,13 +281,25 @@ const videoQueue = [];
 const vpath = (name) => path.join(VIDEO_DIR, name);
 const rmVideoFile = (name) => { if (name) fs.rm(vpath(name), { force: true }, () => {}); };
 
+// Ehdokasvideon henkilö seuraa ehdokasta (ehdokkaan henkilöä voi muokata)
+const videoNominee = (v) => (v.nomineeId ? db.nominees.find((n) => n.id === v.nomineeId) : null);
 function videoView(v) {
+  const nom = videoNominee(v);
+  const personId = nom ? nom.personId : v.personId;
   return {
-    id: v.id, personId: v.personId, personName: userName(v.personId), title: v.title || '', status: v.status, error: v.error || '',
+    id: v.id, personId, personName: nom ? nomName(nom) : userName(personId), title: v.title || '', status: v.status, error: v.error || '',
+    nominee: nom ? { id: nom.id, category: (db.categories.find((c) => c.id === nom.categoryId) || {}).name || '', reason: nom.reason } : null,
     src: v.file ? `/videos/${v.file}` : null, poster: v.poster ? `/videos/${v.poster}` : null,
     duration: v.duration || null, width: v.width || null, height: v.height || null, size: v.size || null,
     byName: v.by ? userName(v.by) : '', createdAt: v.createdAt,
   };
+}
+
+// Ehdokkaan video selaimelle (kaikki kirjautuneet näkevät ehdokkaiden videot)
+function nomVideo(n) {
+  const v = n.videoId && (db.videos || []).find((x) => x.id === n.videoId);
+  if (!v) return null;
+  return { id: v.id, status: v.status, src: v.file ? `/videos/${v.file}` : null, poster: v.poster ? `/videos/${v.poster}` : null, duration: v.duration || null };
 }
 
 // Tiedoston alku kertoo säiliön: MP4/MOV (iPhone, Android, useimmat) tai WebM/MKV
@@ -380,7 +392,7 @@ async function runVideoQueue() {
       still.status = 'failed';
       still.error = /videokuvaa/.test(e.message) ? e.message : 'Videota ei voitu muuntaa. Onko tiedosto ehjä video?';
       console.error(`Video ${id} epäonnistui:`, e.message);
-      notify('errors', `🛑 **Videon muunnos epäonnistui** (${userName(still.personId)})\n${String(e.message).slice(0, 300)}`);
+      notify('errors', `🛑 **Videon muunnos epäonnistui** (${videoView(still).personName || 'ehdotusluonnos, ' + userName(still.by)})\n${String(e.message).slice(0, 300)}`);
     }
   } finally {
     videoJob = null;
@@ -402,21 +414,37 @@ function initVideos() {
       if (fs.existsSync(vpath(`${v.id}.orig`))) videoQueue.push(v.id);
       else { v.status = 'failed'; v.error = 'Lähetys keskeytyi. Lähetä video uudelleen.'; }
     }
+    cleanDrafts();
     writeDb();
     runVideoQueue();
   }));
+  setInterval(cleanDrafts, 60 * 60 * 1000).unref();
 }
 
-// POST /api/admin/videos/upload?personId=…&title=… – runko on itse videotiedosto.
+// Lähetys, runko on itse videotiedosto:
+//  - POST /api/admin/videos/upload?personId=…&title=… – admin lisää videon osallistujalle (Videot-sivu)
+//  - POST /api/videos/upload?categoryId=… – osallistuja liittää videon ehdokasehdotukseen (vaihe 3). Video on
+//    luonnos, kunnes ehdotus lähetetään (POST /api/nominees, videoId). Liittämättömät luonnokset poistetaan.
 // CSRF: vaaditaan oma otsake X-Gaala-Upload, jota toinen sivusto ei voi lähettää ilman CORS-lupaa.
-function handleVideoUpload(req, res, url) {
+const DRAFT_MAX = 4; // liittämättömiä luonnoksia per osallistuja (vanhin poistuu)
+const DRAFT_TTL_MS = 12 * 60 * 60 * 1000;
+function handleVideoUpload(req, res, url, mode) {
   const reject = (status, error) => { send(res, status, { error }); req.resume(); };
   const user = currentUser(req);
   if (!user) return reject(401, 'Kirjaudu ensin sisään.');
-  if (!user.admin) return reject(403, 'Vain adminille.');
   if (req.headers['x-gaala-upload'] !== '1' || req.headers['sec-fetch-site'] === 'cross-site') return reject(403, 'Estetty pyyntö.');
-  const person = db.users[url.searchParams.get('personId') || ''];
-  if (!person || person.root) return reject(404, 'Osallistujaa ei löydy.');
+  let person = null; let cat = null;
+  if (mode === 'admin') {
+    if (!user.admin) return reject(403, 'Vain adminille.');
+    person = db.users[url.searchParams.get('personId') || ''];
+    if (!person || person.root) return reject(404, 'Osallistujaa ei löydy.');
+  } else {
+    if (db.settings.phase !== 3) return reject(409, 'Videon voi liittää ehdotukseen vain ehdokasehdotusvaiheessa.');
+    if (user.root || user.tester) return reject(403, 'Testikäyttäjän video kokeillaan vain omassa selaimessa.');
+    if (isLocked(user)) return reject(409, 'Olet jo lyönyt vastauksesi lukkoon.');
+    cat = advancedCats().find((c) => c.id === url.searchParams.get('categoryId'));
+    if (!cat) return reject(404, 'Kategoriaa ei löydy.');
+  }
   const max = VIDEO_MAX_MB * 1024 * 1024;
   const declared = Number(req.headers['content-length'] || 0);
   if (declared > max) return reject(413, `Video on liian suuri (max ${VIDEO_MAX_MB} Mt).`);
@@ -443,22 +471,40 @@ function handleVideoUpload(req, res, url) {
     const kind = sniffVideo(tmp);
     if (!kind) {
       rmVideoFile(`${id}.upload`);
-      notify('errors', `🛑 **Videon lähetys hylättiin** (${user.name} → ${person.name}): tuntematon tiedostomuoto`);
+      notify('errors', `🛑 **Videon lähetys hylättiin** (${user.name}${person ? ' → ' + person.name : ', ehdotus: ' + cat.name}): tuntematon tiedostomuoto`);
       return send(res, 400, { error: 'Tiedosto ei ole tuettu video (MP4, MOV tai WebM).' });
     }
     fs.renameSync(tmp, vpath(`${id}.orig`));
-    db.videos.push({ id, personId: person.id, title: clean(url.searchParams.get('title'), 80), by: user.id, createdAt: now(), status: 'processing', size, kind });
+    if (person) {
+      db.videos.push({ id, personId: person.id, title: clean(url.searchParams.get('title'), 80), by: user.id, createdAt: now(), status: 'processing', size, kind });
+      writeDb();
+      enqueueVideo(id);
+      return send(res, 200, { ...stateFor(user), notice: ffmpegOk ? 'Video lähetetty. Palvelin käsittelee sen hetken.' : 'Video lähetetty.' });
+    }
+    // Luonnos: vanhimmat liittämättömät saman käyttäjän luonnokset pois, jos niitä on liikaa
+    const drafts = db.videos.filter((v) => v.draft && v.by === user.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    for (const d of drafts.slice(0, Math.max(0, drafts.length - (DRAFT_MAX - 1)))) deleteVideo(d);
+    db.videos.push({ id, personId: null, draft: true, categoryId: cat.id, title: '', by: user.id, createdAt: now(), status: 'processing', size, kind });
     writeDb();
     enqueueVideo(id);
-    send(res, 200, { ...stateFor(user), notice: ffmpegOk ? 'Video lähetetty. Palvelin käsittelee sen hetken.' : 'Video lähetetty.' });
+    send(res, 200, { videoId: id });
   });
 }
 
-// Videot ja kansikuvat: vain adminit (testivaihe). Range-tuki on pakollinen iPhonen Safarille ja kelaukselle.
+// Videot ja kansikuvat. Admin näkee kaikki; ehdokkaaseen liitetyn videon näkevät kaikki kirjautuneet; luonnoksen
+// vain lähettäjä; adminin Videot-sivun videot vain adminit. Range-tuki on pakollinen iPhonen Safarille ja kelaukselle.
+function videoAllowed(user, name) {
+  if (!user || !VIDEO_NAME.test(name)) return false;
+  if (user.admin) return true;
+  const v = (db.videos || []).find((x) => x.file === name || x.poster === name);
+  if (!v) return false;
+  if (v.draft) return v.by === user.id;
+  return !!videoNominee(v);
+}
 function serveVideo(req, res, pathname) {
   const name = pathname.slice('/videos/'.length);
   const user = currentUser(req);
-  if (!user || !user.admin || !VIDEO_NAME.test(name)) { res.writeHead(404); return res.end(); }
+  if (!videoAllowed(user, name)) { res.writeHead(404); return res.end(); }
   const file = vpath(name);
   fs.stat(file, (err, st) => {
     if (err) { res.writeHead(404); return res.end(); }
@@ -482,6 +528,15 @@ function deleteVideo(v) {
   if (videoJob && videoJob.id === v.id && videoJob.child) videoJob.child.kill('SIGKILL');
   for (const n of [v.file, v.poster, `${v.id}.orig`, `${v.id}.upload`, `${v.id}.tmp.mp4`]) rmVideoFile(n);
   db.videos = db.videos.filter((x) => x.id !== v.id);
+  for (const n of db.nominees) if (n.videoId === v.id) delete n.videoId;
+}
+// Liittämättömät, vanhat luonnokset pois (tunnin välein ja käynnistyksessä)
+function cleanDrafts() {
+  const limit = new Date(Date.now() - DRAFT_TTL_MS).toISOString();
+  const old = (db.videos || []).filter((v) => v.draft && v.createdAt < limit);
+  if (!old.length) return;
+  old.forEach(deleteVideo);
+  writeDb();
 }
 
 // ---------- Henkilöt ja ehdokkaat ----------
@@ -552,7 +607,7 @@ function lockReady(user) {
 function removeCategory(cat) {
   const doomed = db.nominees.filter((n) => n.categoryId === cat.id);
   const nomIds = new Set(doomed.map((n) => n.id));
-  doomed.forEach((n) => deleteImage(n.photo));
+  doomed.forEach((n) => { deleteImage(n.photo); const vid = n.videoId && (db.videos || []).find((v) => v.id === n.videoId); if (vid) deleteVideo(vid); });
   db.categories = db.categories.filter((c) => c.id !== cat.id);
   db.catVotes = db.catVotes.filter((v) => v.categoryId !== cat.id);
   db.nominees = db.nominees.filter((n) => !nomIds.has(n.id));
@@ -563,6 +618,8 @@ function removeCategory(cat) {
 
 function removeNominee(nom) {
   deleteImage(nom.photo);
+  const vid = nom.videoId && (db.videos || []).find((v) => v.id === nom.videoId);
+  if (vid) deleteVideo(vid);
   db.nominees = db.nominees.filter((n) => n.id !== nom.id);
   // Poistetun ehdokkaan sija vapautuu (muut sijat pysyvät paikoillaan)
   for (const r of Object.values(db.nomRanks)) if (r[nom.categoryId]) r[nom.categoryId] = r[nom.categoryId].map((id) => (id === nom.id ? null : id));
@@ -588,7 +645,7 @@ function stateFor(user, opts = {}) {
     deadline: s.deadline,
     nextStart: s.nextStart || '',
     phaseEnds: s.phaseEnds || {},
-    limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, rankSlots: RANK_SLOTS, rankPoints: RANK_POINTS, finalists: s.finalists, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals },
+    limits: { targetCategories: s.targetCategories, fixedCategories: fixedCount(), advanceCount: advanceCount(), catVotes: s.catVotes, rankSlots: RANK_SLOTS, rankPoints: RANK_POINTS, finalists: s.finalists, maxCategoryProposals: s.maxCategoryProposals, maxNomineeProposals: s.maxNomineeProposals, videoMaxMb: VIDEO_MAX_MB },
     me: user ? { name: user.name, admin: !!user.admin, root: !!user.root, tester: !!user.tester, locked: user.tester ? false : isLocked(user), unlockRequested: unlockRequested(user), photo: displayPhoto(user) } : null,
   };
   if (!user) return base;
@@ -599,7 +656,7 @@ function stateFor(user, opts = {}) {
 
   const visibleCats = phase <= 2 ? db.categories : advancedCats();
   base.categories = visibleCats.map((c) => ({
-    id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced,
+    id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, videoRequired: !!c.videoRequired,
     mine: c.by === uid, myVote: myCatVotes.has(c.id),
   }));
 
@@ -608,7 +665,7 @@ function stateFor(user, opts = {}) {
     : phase >= 5 ? db.nominees.filter((n) => n.finalist) : [];
   base.nominees = visibleNoms.map((n) => ({
     id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), finalist: !!n.finalist,
-    mine: n.by === uid, myFinal: myFinal[n.categoryId] === n.id,
+    mine: n.by === uid, myFinal: myFinal[n.categoryId] === n.id, video: nomVideo(n),
   }));
   // Oma ehdokasäänestys: { categoryId: [1., 2., 3. sija] } (vain gaalaan päässeet kategoriat)
   base.myRanks = Object.fromEntries(advancedCats().map((c) => [c.id, myRanking(uid, c.id)]));
@@ -680,14 +737,14 @@ function adminView() {
       p5: Object.keys(db.finalVotes[u.id] || {}).length,
       locked: isLocked(u), unlockRequested: unlockRequested(u),
     })).sort((a, b) => a.name.localeCompare(b.name, 'fi')),
-    categories: db.categories.map((c) => ({ id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, votes: catCounts[c.id] || 0, byName: userName(c.by) })),
+    categories: db.categories.map((c) => ({ id: c.id, name: c.name, description: c.description, fixed: !!c.fixed, advanced: !!c.advanced, videoRequired: !!c.videoRequired, votes: catCounts[c.id] || 0, byName: userName(c.by) })),
     nominees: db.nominees.map((n) => ({ id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), ownPhoto: !!n.photo, finalist: !!n.finalist,
       points: (scores[n.id] || {}).points || 0, places: (scores[n.id] || {}).places || [0, 0, 0],
       rankVoters: showVoters && scores[n.id] ? scores[n.id].voters.map((x) => ({ name: userName(x.userId), place: x.place })).sort((a, b) => a.place - b.place || a.name.localeCompare(b.name, 'fi')) : [],
       finalVotes: fin[n.id] || 0, byName: userName(n.by),
       finalVoters: db.settings.phase >= 5 ? Object.entries(db.finalVotes).filter(([, v]) => v[n.categoryId] === n.id).map(([uid]) => userName(uid) || 'poistettu').sort((a, b) => a.localeCompare(b, 'fi')) : [] })),
     safeMode: !!db.settings.safeMode,
-    videos: (db.videos || []).filter((v) => db.users[v.personId]).map(videoView),
+    videos: (db.videos || []).filter((v) => !v.draft && (videoNominee(v) || db.users[v.personId])).map(videoView),
     videoInfo: { ffmpeg: !!ffmpegOk, maxMb: VIDEO_MAX_MB, queue: videoQueue.length + (videoJob ? 1 : 0) },
     hofPublished: !!db.settings.hofPublished,
     awards: awardsAdmin(),
@@ -872,9 +929,23 @@ route('POST', '/api/nominees', ({ user, body }) => {
   if (db.nominees.some((n) => n.categoryId === cat.id && n.personId === person.id && norm(n.reason) === norm(reason))) fail(409, 'Sama ehdotus on jo listalla.');
   const mine = db.nominees.filter((n) => n.categoryId === cat.id && n.by === user.id).length;
   if (mine >= db.settings.maxNomineeProposals) fail(400, `Voit ehdottaa enintään ${db.settings.maxNomineeProposals} ehdokasta per kategoria.`);
-  db.nominees.push({ id: newId(), categoryId: cat.id, personId: person.id, name: person.name, reason, photo: null, finalist: false, by: user.id, createdAt: now() });
+  // Video: oma luonnos (ks. handleVideoUpload). Pakollinen, jos admin on niin määrännyt kategorialle.
+  const video = body.videoId ? (db.videos || []).find((v) => v.id === body.videoId && v.draft && v.by === user.id) : null;
+  if (body.videoId && !video) fail(400, 'Videota ei löytynyt. Lisää video uudelleen.');
+  if (video && video.status === 'failed') fail(400, video.error || 'Videota ei voitu käsitellä. Lisää toinen video.');
+  if (cat.videoRequired && !video) fail(400, `Kategoriaan ${cat.name} tarvitaan ehdotukseen video.`);
+  const nom = { id: newId(), categoryId: cat.id, personId: person.id, name: person.name, reason, photo: null, finalist: false, by: user.id, createdAt: now() };
+  if (video) { nom.videoId = video.id; delete video.draft; delete video.categoryId; video.nomineeId = nom.id; video.personId = person.id; }
+  db.nominees.push(nom);
   writeDb();
   return stateFor(user);
+});
+
+// Osallistuja poistaa oman videoluonnoksensa (esim. vaihtaa videon ennen ehdottamista)
+route('DELETE', '/api/videos/:id', ({ user, params }) => {
+  const v = (db.videos || []).find((x) => x.id === params.id && x.draft && x.by === user.id);
+  if (v) { deleteVideo(v); writeDb(); }
+  return { ok: true };
 });
 
 // Osallistuja poistaa oman ehdokasehdotuksensa (vaihe 3, ennen lukitusta)
@@ -1311,7 +1382,8 @@ route('DELETE', '/api/admin/users/:id', ({ user, params }) => {
   deleteImage(u.photo);
   for (const x of (db.photoSuggestions || []).filter((y) => y.personId === u.id)) deleteImage(x.image);
   db.photoSuggestions = (db.photoSuggestions || []).filter((y) => y.personId !== u.id);
-  for (const v of (db.videos || []).filter((x) => x.personId === u.id)) deleteVideo(v);
+  // Adminin Videot-sivun videot henkilöstä ja hänen omat luonnoksensa pois (ehdokkaiden videot jäävät ehdokkaiden mukana)
+  for (const v of (db.videos || []).filter((x) => (!x.nomineeId && x.personId === u.id) || (x.draft && x.by === u.id))) deleteVideo(v);
   delete db.users[u.id];
   db.catVotes = db.catVotes.filter((v) => v.userId !== u.id);
   delete db.nomRanks[u.id];
@@ -1409,6 +1481,7 @@ route('POST', '/api/admin/categories/auto-advance', ({ user }) => {
 route('POST', '/api/admin/categories/:id', ({ user, params, body }) => {
   const cat = db.categories.find((c) => c.id === params.id) || fail(404, 'Kategoriaa ei löydy.');
   if ('advanced' in body && !cat.fixed) cat.advanced = !!body.advanced;
+  if ('videoRequired' in body) { cat.videoRequired = !!body.videoRequired; writeDb(); return stateFor(user); }
   applyCategoryEdit(cat, body);
   writeDb();
   return stateFor(user);
@@ -1985,7 +2058,8 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/images/')) return serveImage(req, res, pathname);
   if (pathname.startsWith('/videos/')) return serveVideo(req, res, pathname);
-  if (req.method === 'POST' && pathname === '/api/admin/videos/upload') return handleVideoUpload(req, res, new URL(req.url, 'http://x'));
+  if (req.method === 'POST' && pathname === '/api/admin/videos/upload') return handleVideoUpload(req, res, new URL(req.url, 'http://x'), 'admin');
+  if (req.method === 'POST' && pathname === '/api/videos/upload') return handleVideoUpload(req, res, new URL(req.url, 'http://x'), 'nominee');
   if (/^\/p\/[\w-]+\/img\//.test(pathname)) return serveAwardImage(res, pathname);
   if (!pathname.startsWith('/api/')) return serveStatic(req, res, pathname);
 

@@ -72,6 +72,16 @@ Jos webhookia ei ole asetettu, ilmoitukset ovat pois päältä. Discordin katko 
 ### Julkinen päivittäinen tiedote
 
 Toinen, erillinen webhook osallistujien kanavalle (hallinta → **Julkinen päivittäinen tiedote**). Vaiheissa 1–5 palvelin lähettää kerran päivässä valittuun aikaan (oletus 12:00) virallisen kaksikielisen tiedotteen: montako jäsentä on lyönyt vaiheen lukkoon ja paljonko aikaa vaiheen päättymiseen on (tänään / huomenna / N päivää, vaiheen päättymisajan mukaan). Kummankin kielen kappaleen perään listataan ne, jotka eivät ole vielä lukinneet (paitsi jos kukaan ei ole vielä lukinnut, jolloin listassa olisivat kaikki). Nimilistan saa pois asetuksesta "Listaa tiedotteessa lukitsemattomien nimet". Kohdassa "Ei mukana tiedotteessa" voi rajata pois esim. adminit, jotka ehdottavat mutta eivät äänestä: he eivät näy tiedotteen lukumäärissä eivätkä nimilistassa (adminien kanavan muistutuksiin rajaus ei vaikuta). Lopussa on allekirjoitus ja maininta automaattisesta viestistä. Pingattavan roolin (esim. @Gaala-jäsenet) voi asettaa roolin ID:llä; muuten ketään ei pingata. Hallinnassa tekstin voi esikatsella ja lähettää heti (**Lähetä nyt**).
+## Ehdokkaiden videot
+
+Vaiheessa 3 jokaiseen ehdotukseen voi liittää videon puhelimesta (iPhone, Android) tai tietokoneelta. Hallinnan kategoriataulukossa valitaan **Video pakollinen ehdotuksissa** niille kategorioille, joissa ehdotusta ei voi tehdä ilman videota (esim. Vuoden videoklippi).
+
+- Lähetys alkaa heti, kun video on valittu, joten se on yleensä perillä, kun peruste on kirjoitettu. Ennen ehdottamista video on luonnos, jonka näkee vain lähettäjä; liittämättömät luonnokset poistuvat 12 tunnin kuluttua (enintään 4 kerrallaan per osallistuja).
+- Videollinen ehdokaskortti näyttää videon profiilikuvan tilalla vaiheissa 3–5. Hiiri kortin päällä → video pyörii kortissa (äänet voi kytkeä pois kategorian otsikosta), kuvan klikkaus → iso ruutu, jossa nuolilla saman kategorian muut videot. Finaalissa videon avaaminen ei äänestä, vaan ääni annetaan Valitse-kohdasta.
+- Ehdokkaiden videot näkyvät kaikille kirjautuneille. Kun ehdotus poistetaan, video poistuu sen mukana.
+- Testikäyttäjän video kokeillaan vain omassa selaimessa, eikä sitä lähetetä palvelimelle.
+- Adminin Videot-sivulla näkyvät myös ehdokkaiden videot (merkintä "Ehdotus · kategoria"). Sieltä poistettu video irrotetaan ehdokkaasta.
+
 ## Videot (testi, vain adminit)
 
 Hallinnan paneelista **Videot** avautuu sivu, jolla adminit lisäävät osallistujille videoklippejä (esim. kategoriaan Vuoden videoklippi). Toistaiseksi videot näkyvät vain admineille.
