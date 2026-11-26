@@ -87,7 +87,61 @@ function render() {
   // Hall of Famen valittu vuosi näkyviin välilehtirivillä (vain rivi vierii, ei sivu)
   const tabs = app.querySelector('.hof-tabs'); const cur = tabs && tabs.querySelector('[aria-selected="true"]');
   if (cur) tabs.scrollLeft = cur.offsetLeft - (tabs.clientWidth - cur.offsetWidth) / 2;
+  setupFolds(app);
 }
+
+// ---------- Hallinnan kortit avattavina ----------
+// Jokainen hallinnan kortti taittuu otsikkoonsa (kuten Hall of Fame -vuodet). Kortteja ei tarvitse merkitä erikseen:
+// piirron jälkeen jokainen hallinnan lohko, jonka alussa on otsikko (.eyebrow), muutetaan avattavaksi. Auki olevat
+// muistetaan tässä selaimessa (localStorage), joten valinta säilyy uudelleenpiirroissa ja sivun latauksissa.
+const FOLD_DEFAULT_OPEN = ['Vaihe', 'Osallistujat']; // pienet yhteenvetokortit oletuksena auki
+let foldState = (() => { try { return JSON.parse(localStorage.getItem('gaalaFold') || '{}') || {}; } catch { return {}; } })();
+const saveFolds = () => { try { localStorage.setItem('gaalaFold', JSON.stringify(foldState)); } catch {} };
+// Avain otsikosta ilman muuttuvia lukuja: "Kategoriat · jatkoon 3 / 4" → "Kategoriat"
+const foldKey = (text) => text.split('·')[0].replace(/[\d/()]+/g, '').replace(/\s+/g, ' ').trim();
+const foldOpen = (key) => (key in foldState ? foldState[key] : FOLD_DEFAULT_OPEN.includes(key));
+function setupFolds(root) {
+  const blocks = root.querySelectorAll('.admin > *, .admin > .admin-grid > *');
+  for (const el of blocks) {
+    if (el.matches('header, .admin-grid') || el.classList.contains('fold')) continue;
+    const first = el.firstElementChild; if (!first) continue;
+    const eyebrow = first.matches('.eyebrow') ? first : first.querySelector(':scope > .eyebrow, :scope > * > .eyebrow');
+    if (!eyebrow || !el.children[1]) continue;
+    const key = foldKey(eyebrow.textContent);
+    if (!key) continue;
+    const head = first;
+    el.classList.add('fold'); head.classList.add('fold-head'); eyebrow.classList.add('fold-title');
+    el.dataset.fold = key;
+    eyebrow.setAttribute('role', 'button'); eyebrow.tabIndex = 0;
+    const open = foldOpen(key);
+    el.classList.toggle('is-folded', !open); eyebrow.setAttribute('aria-expanded', String(open));
+  }
+  // Hall of Fame -vuosien ym. <details>-lohkot: auki olevat muistetaan
+  root.querySelectorAll('.admin details > summary').forEach((sum) => {
+    const key = 'details:' + foldKey(sum.textContent);
+    if (key in foldState) sum.parentElement.open = foldState[key];
+  });
+}
+function toggleFold(eyebrow) {
+  const el = eyebrow.closest('.fold'); if (!el) return;
+  const open = el.classList.toggle('is-folded') === false;
+  eyebrow.setAttribute('aria-expanded', String(open));
+  foldState[el.dataset.fold] = open; saveFolds();
+}
+document.addEventListener('click', (e) => {
+  const head = e.target.closest && e.target.closest('.fold-head');
+  if (!head || e.target.closest('button, a, input, select, textarea, label')) return;
+  const title = head.matches('.fold-title') ? head : head.querySelector('.fold-title');
+  if (title) toggleFold(title);
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('fold-title')) { e.preventDefault(); toggleFold(e.target); }
+});
+document.addEventListener('toggle', (e) => {
+  const d = e.target; if (!(d instanceof HTMLDetailsElement) || !d.closest('.admin')) return;
+  const sum = d.querySelector(':scope > summary'); if (!sum) return;
+  foldState['details:' + foldKey(sum.textContent)] = d.open; saveFolds();
+}, true);
 
 // Sivun alaosa: Gaalan järjestäjä
 function footer() {

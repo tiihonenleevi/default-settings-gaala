@@ -1212,3 +1212,23 @@ button.vid-media:focus-visible { outline: 2px solid var(--focus); outline-offset
   .vlb-cap { order: -1; flex-basis: 100%; }
   .vlb-thumb { width: 52px; height: 52px; }
 }
+
+/* ---------- Hallinnan kortit avattavina ---------- */
+.fold-head { cursor: pointer; user-select: none; }
+.fold-title { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
+.fold-title::before { content: ""; flex: none; width: 0; height: 0; border-style: solid; border-width: 5px 0 5px 8px; border-color: transparent transparent transparent currentColor; transition: transform .15s; transform: rotate(90deg); }
+.fold.is-folded .fold-title::before { transform: none; }
+.fold-title:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
+.fold.is-folded > :not(.fold-head) { display: none !important; }
+.fold-head:hover .fold-title { color: var(--gold-light); }
+/* Otsikkorivin napit (esim. "Valitse … eniten ääniä saanutta") piiloon, kun kortti on kiinni */
+.fold.is-folded > .fold-head > :not(.fold-title) { display: none; }
+/* Kehyksettömät lohkot (Osallistujat ja koodit, Kategoriat, Ehdokkaat) saavat saman kortin ulkoasun kuin muut */
+.admin > .fold:not(.panel) {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--card-shadow);
+  padding: 26px; display: grid; gap: var(--space-3);
+}
+.admin > .fold:not(.panel) > .panel { background: none; border: 0; box-shadow: none; padding: 0; }
+.fold.is-folded { padding-block: 18px !important; }
+.admin-grid > .fold.is-folded { align-self: start; }
+@media (max-width: 520px) { .admin > .fold:not(.panel) { padding: 20px; } }
