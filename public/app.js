@@ -313,19 +313,25 @@ function qrOutline(qr) {
   }
   return { n, loops };
 }
+// mm = koodin sivun pituus (reunimmaisten tummien ruutujen ulkoreunasta toiseen), ilman tyhjää reunusta, joten koodin
+// kulma on SVG:n origossa. Fusion 360 ei huomioi width/height-arvojen millimetrejä, vaan lukee SVG:n yksiköt
+// pikseleinä (96 px = 25,4 mm). Siksi koordinaatit kirjoitetaan valmiiksi pikseleinä, jolloin koko on oikea sekä
+// Fusionissa että ohjelmissa, jotka lukevat millimetrit (Inkscape, selain).
 function qrSvgFile(text, mm) {
   const qr = qrLib(0, 'M'); qr.addData(text); qr.make();
-  const { n, loops } = qrOutline(qr); const m = 4; const total = n + 2 * m;
-  const d = loops.map((l) => 'M' + l.map(([x, y]) => `${x + m} ${y + m}`).join('L') + 'Z').join('');
+  const { n, loops } = qrOutline(qr);
+  const k = (mm / 25.4) * 96 / n; // pikseliä per moduuli
+  const f = (v) => String(+(v * k).toFixed(4));
+  const d = loops.map((l) => 'M' + l.map(([x, y]) => `${f(x)} ${f(y)}`).join('L') + 'Z').join('');
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${mm}mm" height="${mm}mm" viewBox="0 0 ${total} ${total}">
-  <!-- ${text} · ${n}x${n} moduulia + ${m} moduulin reunus · moduuli ${(mm / total).toFixed(3)} mm -->
+<svg xmlns="http://www.w3.org/2000/svg" width="${mm}mm" height="${mm}mm" viewBox="0 0 ${f(n)} ${f(n)}">
+  <!-- ${text} · ${n}x${n} moduulia · sivu ${mm} mm · moduuli ${(mm / n).toFixed(3)} mm · jätä ympärille tyhjää vähintään ${(4 * mm / n).toFixed(1)} mm (4 moduulia) -->
   <path d="${d}" fill="#000" fill-rule="evenodd"/>
 </svg>
 `;
 }
 function downloadQrSvg(text, name) {
-  const mm = Math.min(300, Math.max(10, Number((document.getElementById('aw-mm') || {}).value) || 40));
+  const mm = Math.min(300, Math.max(10, Number((document.getElementById('aw-mm') || {}).value) || 53));
   const blob = new Blob([qrSvgFile(text, mm)], { type: 'image/svg+xml' });
   const link = document.createElement('a');
   link.download = `QR ${name.replace(/[\\/:*?"<>|]+/g, '')} ${mm}mm.svg`; link.href = URL.createObjectURL(blob);
@@ -388,7 +394,7 @@ function awardsPanel() {
         <button class="btn btn--ghost" type="submit">Tallenna osoite</button>
       </form>
       <div class="row" style="gap:10px;flex-wrap:wrap;align-items:end">
-        <div class="field" style="max-width:220px"><label for="aw-mm">SVG:n koko (mm)</label><input class="input" id="aw-mm" type="number" min="10" max="300" step="1" value="40" data-keep></div>
+        <div class="field" style="max-width:220px"><label for="aw-mm">QR-koodin sivu (mm)</label><input class="input" id="aw-mm" type="number" min="10" max="300" step="0.5" value="53" data-keep></div>
         <p class="small muted" style="margin:0;flex:1 1 260px">SVG on 3D-mallinnukseen (esim. Fusion 360: Insert → Insert SVG). Tummat ruudut ovat yhtenäisinä ääriviivoina, joten ne voi pursottaa suoraan. Koko sisältää 4 ruudun valkoisen reunuksen; jätä se tyhjäksi pokaalin pohjaan, jotta koodi lukeutuu.</p>
       </div>
       ${A.current.length ? `
