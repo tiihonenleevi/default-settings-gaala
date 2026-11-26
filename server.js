@@ -107,6 +107,10 @@ function loadDb() {
     st.phaseScheme = 3;
   }
   delete data.nomVotes;
+  // Ehdokkaan yksi video (videoId) → liitelista (media)
+  for (const n of data.nominees || []) {
+    if (n.videoId) { n.media = [...(n.media || []), { type: 'video', id: n.videoId }]; delete n.videoId; }
+  }
   // Ehdotuksen liite: aiempi videoRequired (true/false) → mediaRequired ('' = vapaaehtoinen, 'any' = kuva tai video, 'video')
   for (const c of data.categories || []) {
     if ('videoRequired' in c) { if (c.videoRequired && !c.mediaRequired) c.mediaRequired = 'video'; delete c.videoRequired; }
@@ -299,11 +303,23 @@ function videoView(v) {
   };
 }
 
-// Ehdokkaan video selaimelle (kaikki kirjautuneet näkevät ehdokkaiden videot)
-function nomVideo(n) {
-  const v = n.videoId && (db.videos || []).find((x) => x.id === n.videoId);
-  if (!v) return null;
-  return { id: v.id, status: v.status, src: v.file ? `/videos/${v.file}` : null, poster: v.poster ? `/videos/${v.poster}` : null, duration: v.duration || null };
+// Ehdokkaan liitteet selaimelle lisäysjärjestyksessä (kaikki kirjautuneet näkevät ne).
+// n.media = [{ type: 'video', id } | { type: 'image', image }]
+function nomMediaView(n) {
+  return (n.media || []).map((m) => {
+    if (m.type === 'image') return db.settings.safeMode ? null : { type: 'image', src: imgUrl(m.image) }; // Alle K18: liitekuvat piiloon
+    const v = (db.videos || []).find((x) => x.id === m.id);
+    if (!v) return null;
+    return { type: 'video', id: v.id, status: v.status, src: v.file ? `/videos/${v.file}` : null, poster: v.poster ? `/videos/${v.poster}` : null, duration: v.duration || null };
+  }).filter(Boolean);
+}
+const MEDIA_MAX = 6; // liitteitä per ehdotus
+// Ehdokkaan liitteiden poisto (ehdotuksen tai kategorian poiston yhteydessä)
+function deleteNomMedia(n) {
+  for (const m of n.media || []) {
+    if (m.type === 'image') deleteImage(m.image);
+    else { const v = (db.videos || []).find((x) => x.id === m.id); if (v) deleteVideo(v); }
+  }
 }
 
 // Tiedoston alku kertoo säiliön: MP4/MOV (iPhone, Android, useimmat) tai WebM/MKV
@@ -430,7 +446,7 @@ function initVideos() {
 //  - POST /api/videos/upload?categoryId=… – osallistuja liittää videon ehdokasehdotukseen (vaihe 3). Video on
 //    luonnos, kunnes ehdotus lähetetään (POST /api/nominees, videoId). Liittämättömät luonnokset poistetaan.
 // CSRF: vaaditaan oma otsake X-Gaala-Upload, jota toinen sivusto ei voi lähettää ilman CORS-lupaa.
-const DRAFT_MAX = 4; // liittämättömiä luonnoksia per osallistuja (vanhin poistuu)
+const DRAFT_MAX = 8; // liittämättömiä luonnoksia per osallistuja (vanhin poistuu)
 const DRAFT_TTL_MS = 12 * 60 * 60 * 1000;
 function handleVideoUpload(req, res, url, mode) {
   const reject = (status, error) => { send(res, status, { error }); req.resume(); };
@@ -532,7 +548,7 @@ function deleteVideo(v) {
   if (videoJob && videoJob.id === v.id && videoJob.child) videoJob.child.kill('SIGKILL');
   for (const n of [v.file, v.poster, `${v.id}.orig`, `${v.id}.upload`, `${v.id}.tmp.mp4`]) rmVideoFile(n);
   db.videos = db.videos.filter((x) => x.id !== v.id);
-  for (const n of db.nominees) if (n.videoId === v.id) delete n.videoId;
+  for (const n of db.nominees) if (n.media) n.media = n.media.filter((m) => !(m.type === 'video' && m.id === v.id));
 }
 // Liittämättömät, vanhat luonnokset pois (tunnin välein ja käynnistyksessä)
 function cleanDrafts() {
@@ -557,6 +573,8 @@ function displayPhoto(u) {
 function nomPhoto(n) {
   if (db.settings.safeMode) return displayPhoto(n.personId && db.users[n.personId]);
   if (n.photo) return photoOf(n.photo, n.crop);
+  const img = [...(n.media || [])].reverse().find((m) => m.type === 'image');
+  if (img) return photoOf(img.image, null); // viimeisimmäksi lisätty liitekuva
   const p = n.personId && db.users[n.personId];
   return p && p.photo ? photoOf(p.photo, n.crop || p.photoCrop) : null;
 }
@@ -611,7 +629,7 @@ function lockReady(user) {
 function removeCategory(cat) {
   const doomed = db.nominees.filter((n) => n.categoryId === cat.id);
   const nomIds = new Set(doomed.map((n) => n.id));
-  doomed.forEach((n) => { deleteImage(n.photo); const vid = n.videoId && (db.videos || []).find((v) => v.id === n.videoId); if (vid) deleteVideo(vid); });
+  doomed.forEach((n) => { deleteImage(n.photo); deleteNomMedia(n); });
   db.categories = db.categories.filter((c) => c.id !== cat.id);
   db.catVotes = db.catVotes.filter((v) => v.categoryId !== cat.id);
   db.nominees = db.nominees.filter((n) => !nomIds.has(n.id));
@@ -622,8 +640,7 @@ function removeCategory(cat) {
 
 function removeNominee(nom) {
   deleteImage(nom.photo);
-  const vid = nom.videoId && (db.videos || []).find((v) => v.id === nom.videoId);
-  if (vid) deleteVideo(vid);
+  deleteNomMedia(nom);
   db.nominees = db.nominees.filter((n) => n.id !== nom.id);
   // Poistetun ehdokkaan sija vapautuu (muut sijat pysyvät paikoillaan)
   for (const r of Object.values(db.nomRanks)) if (r[nom.categoryId]) r[nom.categoryId] = r[nom.categoryId].map((id) => (id === nom.id ? null : id));
@@ -669,7 +686,7 @@ function stateFor(user, opts = {}) {
     : phase >= 5 ? db.nominees.filter((n) => n.finalist) : [];
   base.nominees = visibleNoms.map((n) => ({
     id: n.id, categoryId: n.categoryId, personId: n.personId || null, name: nomName(n), reason: n.reason, photo: nomPhoto(n), finalist: !!n.finalist,
-    mine: n.by === uid, myFinal: myFinal[n.categoryId] === n.id, video: nomVideo(n),
+    mine: n.by === uid, myFinal: myFinal[n.categoryId] === n.id, media: nomMediaView(n),
   }));
   // Oma ehdokasäänestys: { categoryId: [1., 2., 3. sija] } (vain gaalaan päässeet kategoriat)
   base.myRanks = Object.fromEntries(advancedCats().map((c) => [c.id, myRanking(uid, c.id)]));
@@ -933,21 +950,37 @@ route('POST', '/api/nominees', ({ user, body }) => {
   if (db.nominees.some((n) => n.categoryId === cat.id && n.personId === person.id && norm(n.reason) === norm(reason))) fail(409, 'Sama ehdotus on jo listalla.');
   const mine = db.nominees.filter((n) => n.categoryId === cat.id && n.by === user.id).length;
   if (mine >= db.settings.maxNomineeProposals) fail(400, `Voit ehdottaa enintään ${db.settings.maxNomineeProposals} ehdokasta per kategoria.`);
-  // Liite: joko kuva (data-URL, selain on jo pienentänyt) tai video (oma luonnos, ks. handleVideoUpload).
-  // Admin voi vaatia kategoriaan kuvan tai videon ('any') tai nimenomaan videon ('video').
-  const video = body.videoId ? (db.videos || []).find((v) => v.id === body.videoId && v.draft && v.by === user.id) : null;
-  if (body.videoId && !video) fail(400, 'Videota ei löytynyt. Lisää video uudelleen.');
-  if (video && video.status === 'failed') fail(400, video.error || 'Videota ei voitu käsitellä. Lisää toinen video.');
-  if (video && body.image) fail(400, 'Liitä ehdotukseen joko kuva tai video, ei molempia.');
-  if (cat.mediaRequired === 'video' && !video) fail(400, `Kategoriaan ${cat.name} tarvitaan ehdotukseen video.`);
-  if (cat.mediaRequired === 'any' && !video && !body.image) fail(400, `Kategoriaan ${cat.name} tarvitaan ehdotukseen kuva tai video.`);
-  const photo = body.image ? saveImage(body.image) : null; // viimeisenä, ettei hylätystä ehdotuksesta jää kuvaa levylle
-  const nom = { id: newId(), categoryId: cat.id, personId: person.id, name: person.name, reason, photo, finalist: false, by: user.id, createdAt: now() };
-  if (video) { nom.videoId = video.id; delete video.draft; delete video.categoryId; video.nomineeId = nom.id; video.personId = person.id; }
+  // Liitteet lisäysjärjestyksessä: videoista oma luonnos (ks. handleVideoUpload), kuvista data-URL (selain on jo
+  // pienentänyt). Admin voi vaatia kategoriaan kuvan tai videon ('any') tai vähintään yhden videon ('video').
+  const items = Array.isArray(body.media) ? body.media : [];
+  if (items.length > MEDIA_MAX) fail(400, `Enintään ${MEDIA_MAX} kuvaa tai videota per ehdotus.`);
+  const used = new Set();
+  const checked = items.map((m) => {
+    if (m && m.type === 'video') {
+      const v = (db.videos || []).find((x) => x.id === m.id && x.draft && x.by === user.id);
+      if (!v || used.has(v.id)) fail(400, 'Videota ei löytynyt. Lisää video uudelleen.');
+      if (v.status === 'failed') fail(400, v.error || 'Videota ei voitu käsitellä. Poista se ja lisää toinen video.');
+      used.add(v.id);
+      return { type: 'video', v };
+    }
+    if (m && m.type === 'image' && typeof m.data === 'string') return { type: 'image', data: m.data };
+    return fail(400, 'Tuntematon liite.');
+  });
+  if (cat.mediaRequired === 'video' && !checked.some((m) => m.type === 'video')) fail(400, `Kategoriaan ${cat.name} tarvitaan ehdotukseen vähintään yksi video.`);
+  if (cat.mediaRequired === 'any' && !checked.length) fail(400, `Kategoriaan ${cat.name} tarvitaan ehdotukseen kuva tai video.`);
+  // Kuvat tallennetaan viimeisenä, ettei hylätystä ehdotuksesta jää kuvia levylle (ja epäonnistuessa siivotaan jo tallennetut)
+  const saved = [];
+  try { for (const m of checked) if (m.type === 'image') { m.image = saveImage(m.data); saved.push(m.image); } } catch (e) { saved.forEach(deleteImage); throw e; }
+  const nom = { id: newId(), categoryId: cat.id, personId: person.id, name: person.name, reason, photo: null, finalist: false, by: user.id, createdAt: now() };
+  nom.media = checked.map((m) => {
+    if (m.type === 'image') return { type: 'image', image: m.image };
+    delete m.v.draft; delete m.v.categoryId; m.v.nomineeId = nom.id; m.v.personId = person.id;
+    return { type: 'video', id: m.v.id };
+  });
   db.nominees.push(nom);
   writeDb();
   return stateFor(user);
-}, { maxBody: 12 * 1024 * 1024 });
+}, { maxBody: 24 * 1024 * 1024 });
 
 // Osallistuja poistaa oman videoluonnoksensa (esim. vaihtaa videon ennen ehdottamista)
 route('DELETE', '/api/videos/:id', ({ user, params }) => {
